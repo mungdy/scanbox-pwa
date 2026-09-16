@@ -1,6 +1,6 @@
 # Third-party components
 
-ScanBox v1.1.6에서 사용하는 주요 외부 구성요소와 고정 버전입니다.
+ScanBox v1.1.7에서 사용하는 주요 외부 구성요소와 고정 버전입니다.
 
 | Component | Version | Purpose | Runtime distribution |
 |---|---:|---|---|

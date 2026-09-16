@@ -1,121 +1,96 @@
-# ScanBox PWA v1.1.6 QA Report
+# ScanBox PWA v1.1.7 QA Report
 
-검토일: 2026-09-16 KST
+검증일: 2026-09-16 KST
 
-## 검증 범위
+## 범위
 
-v1.1.6은 v1.1.5의 문서 외곽 검출 / seamless 원근 보정을 유지하면서 다음 기능을 추가하거나 재구성한 버전입니다.
+v1.1.7은 v1.1.6의 문서 외곽 검출, seamless 원근 보정, KOR/ENG/CHI OCR 및 PDF 구조 편집 기능을 유지하면서 스캔 페이지 UI를 단순화한 버전입니다.
 
-- 스캔 페이지 썸네일 정렬 / 번호 이동 / 즉시 삭제
-- PDF 페이지 크기 `사진에 맞춤 / A4 / A3`
-- OCR 언어 `KOR / ENG / CHI` 독립 선택 및 선택 기억
-- OCR 검색 텍스트 교정
-- 기존 변환 탭을 `PDF 편집` 탭으로 재구성
-- PDF 여러 개 합치기 / 나누기 / 선택 추출 / 삭제 / 재정렬
-- PDF 편집 페이지의 OCR 검색 텍스트 교정
-- PDF → JPG / PNG 유지
+주요 변경:
+- 별도 `페이지 순서` 썸네일 영역 제거
+- 페이지 카드의 `≡` 손잡이 Drag & Drop만으로 스캔 순서 변경
+- `[번호] 페이지` 직접 입력 순서 이동
+- 편집 결과 전체화면 미리보기
+- 스캔 필터 `컬러 / 흑백 / 문서` 3개로 축소
+- 삭제 버튼을 빨간색 위험 버튼으로 분리
+- 설정 탭 OCR 언어 중복 표시 제거
+- PDF 규격 A5 / B4 / B5 / Letter / Legal 추가
+- PDF 편집 빈 상태 UI 단순화
+- 보안 준비 완료 문구 간소화
 
-## 정적 코드 검사
+## 정적 검사
 
-배포 소스에 대해 다음 검사를 수행했고 통과했습니다.
+- `node --check app.js` 통과
+- `node --check sw.js` 통과
+- `node --check secure-runtime.js` 통과
+- `node --check pdf-engine.js` 통과
+- HTML id 중복 검사: 중복 없음
+- `app.js`, `sw.js`, `secure-runtime.js`, `manifest.webmanifest`, 화면 표기의 v1.1.7 버전 일치 확인
+- 제거 대상 `pageThumbSection`, `pageThumbList`, `bindThumbDrag`, 설정 탭 `ocrLangSummary` 참조가 실행 코드에 남아 있지 않음을 확인
 
-- `app.js`, `pdf-engine.js`, `secure-runtime.js`, `sw.js`, `theme-init.js` Node.js 문법 검사
-- HTML 중복 ID 검사
-- `app.js`의 고정 `#id` DOM 참조가 실제 HTML ID와 모두 연결되는지 검사
-- `index.html`, `app.js`, `sw.js`, `secure-runtime.js`, `manifest.webmanifest`의 1.1.6 버전 일치 확인
-- Service Worker `APP_SHELL`에 선언된 로컬 파일이 실제 패키지에 존재하는지 확인
-- CSS 중괄호 구조 검사
-- v1.1.4 이전 삼각형 mesh 보정 코드(`drawMappedTriangle`, `squareToQuadMapper`, 구형 `warpDocumentJs`) 부재 확인
-- 스캔 탭의 구형 `importPdfToEditor` 경로 제거 확인
-- `이미지 → PDF` 변환 UI 제거 확인
+## 스캔 페이지 UI
 
-## 스캔 페이지 관리
+코드 검증 기준:
+- `≡` 버튼에만 `data-sort-handle`이 적용되어 터치 정렬 시작 영역이 명확함
+- 정렬 중 DOM 카드 순서를 기준으로 `state.pages`를 다시 구성함
+- `[번호] 페이지` input의 change 이벤트가 `moveScannerPage()`로 연결됨
+- 번호는 1 ~ 전체 페이지 수 범위로 clamp됨
+- 삭제 버튼은 다른 편집 버튼 그룹과 분리되고 위험 색상 스타일을 사용함
 
-- 여러 이미지 추가 후 `pageThumbList`에 썸네일이 표시되도록 구현했습니다.
-- Pointer Event 기반 터치 Drag & Drop으로 아이폰에서도 정렬할 수 있는 구조입니다.
-- 번호 입력으로 직접 페이지 위치를 변경할 수 있습니다.
-- 썸네일에서 즉시 삭제할 수 있습니다.
-- 기존 상세 페이지 카드의 드래그 정렬도 유지합니다.
+실제 iPhone/Android 터치 Drag & Drop은 컨테이너 환경에서 물리 기기 검증이 불가능하므로 최종 기기 확인이 필요합니다.
 
-실제 iPhone Safari의 터치 감도와 스크롤 충돌 여부는 기기 테스트가 필요합니다.
+## 스캔 미리보기
 
-## PDF 페이지 크기 / 흰 여백
+- 페이지 이미지를 누르면 `scanPreviewSheet`가 열리도록 연결
+- 현재 `previewUrl`을 사용하므로 영역 보정 / 회전 / 필터가 적용된 최신 편집 결과를 표시
+- 이전 / 다음 버튼 지원
+- 좌우 55 px 이상 스와이프로 페이지 이동 지원
+- 처음 / 마지막 페이지에서 해당 방향 버튼 비활성화
 
-`pdf-engine.js`를 실제로 실행해 1000 × 1500 JPEG 한 장으로 PDF를 생성한 뒤 `pdfinfo`로 MediaBox를 확인했습니다.
+## 필터
 
-- `사진에 맞춤`: 561.26 × 841.89 pt — 이미지 종횡비와 동일
-- `A4`: 595.276 × 841.89 pt
-- `A3`: 841.89 × 1190.551 pt
+화면 노출 필터는 다음 3개만 유지했습니다.
+- `컬러`: 추가 픽셀 필터 없음
+- `흑백`: RGB를 luminance 기반 grayscale로만 변환
+- `문서`: 기존 document 모드의 adaptive threshold/OpenCV 또는 JS fallback 유지
 
-세 모드 모두 이미지 배치 행렬이 `(0, 0)`에서 PDF 페이지 전체 폭/높이를 사용하도록 생성됩니다. 따라서 기존처럼 A4 페이지 안에서 이미지를 `contain`해 상·하단에 흰 여백을 만드는 경로는 제거했습니다.
+기존 `자동`, `그레이` 버튼은 UI에서 제거했습니다. 기존 강한 binary `흑백` 모드는 제거하고 흑백 버튼을 단순 grayscale 의미로 변경했습니다.
 
-- `사진에 맞춤`: 비율 유지, 흰 여백 없음, 왜곡 없음
-- `A4 / A3`: 고정 규격 페이지 전체를 채우므로 흰 여백 없음. 원본 비율과 규격 비율이 다르면 미세한 비율 정규화가 발생할 수 있음
+## PDF 페이지 크기
 
-마지막 선택은 `localStorage`에 저장됩니다. JPG/PNG 출력 시에는 PDF 페이지 크기 UI를 비활성화합니다.
+자체 PDF 엔진으로 각 규격 PDF를 실제 생성한 뒤 `/MediaBox`를 확인했습니다.
 
-## OCR 언어
+- 사진에 맞춤(1000 × 1500 테스트 이미지): 561.26 × 841.89 pt
+- A3: 841.89 × 1190.551 pt
+- A4: 595.276 × 841.89 pt
+- A5: 419.528 × 595.276 pt
+- B4: 728.504 × 1031.811 pt (257 × 364 mm)
+- B5: 515.906 × 728.504 pt (182 × 257 mm)
+- Letter: 612 × 792 pt
+- Legal: 612 × 1008 pt
 
-- `KOR → kor`
-- `ENG → eng`
-- `CHI → chi_tra`
+규격 모드는 이미지가 페이지 전체를 채우도록 생성하므로 별도 흰 여백을 추가하지 않습니다.
 
-세 언어를 각각 독립 체크할 수 있으며 최소 하나는 항상 선택되어야 합니다. 선택 상태는 `localStorage`에 저장됩니다.
+## OCR / 검색 PDF 회귀 검사
 
-OCR 언어를 바꾸면 기존 페이지 OCR 결과를 무효화하고 OCR worker를 다시 생성합니다. 또한 `보안 · 오프라인 준비` 완료 기록을 초기화해 새로 선택한 언어 모델이 오프라인 준비 대상에 반영되도록 했습니다.
+A4 테스트 PDF에 `테스트 OCR 見積書 ABC 123`을 검색 레이어로 넣어 생성 후 `pdftotext`로 다시 추출했고 동일 텍스트가 추출되는 것을 확인했습니다.
 
-`@tesseract.js-data/chi_tra` 1.0.0 패키지의 존재는 공개 패키지 메타데이터로 확인했습니다. 실제 iPhone에서 KOR / ENG / CHI 조합별 OCR 정확도와 초기 다운로드 시간은 기기 테스트가 필요합니다.
+OCR 언어 선택은 스캔 탭의 KOR / ENG / CHI에서만 관리하며 설정 탭에는 중복 표시하지 않습니다.
 
-## OCR 텍스트 교정
+## 보안 · 캐시
 
-### 스캔 탭
-`OCR 확인`의 텍스트를 수정하고 적용하면 페이지별 `editedText`로 저장됩니다. 검색 PDF 생성 시 해당 페이지는 보이는 스캔 이미지를 변경하지 않고 교정 텍스트를 숨김 `/ActualText` 레이어로 기록합니다.
+- `secure-runtime.js`, `sw.js`, 앱 코드 버전을 v1.1.7로 통일
+- Service Worker는 활성화 시 이전 `scanbox-*` 버전 캐시를 정리
+- 앱 시작 시 이전 버전 offline-ready / vendor-pin 메타데이터 정리
+- 같은 v1.1.7에서 보안 준비가 완료되면 상태를 `준비 완료 ✓`로 표시
+- 사용자가 직접 다시 누르지 않는 한 준비 작업을 자동 반복하지 않음
 
-### PDF 편집 탭
-선택한 PDF 페이지의 기존 검색 텍스트를 PDF.js로 읽어 수정할 수 있습니다. 수정이 적용된 페이지만 고해상도 이미지로 다시 렌더링한 뒤 교정된 검색 레이어를 추가합니다.
+## 제한 / 실제 기기 확인 필요
 
-이 동작은 **보이는 글씨를 수정하는 기능이 아닙니다.** 또한 OCR 텍스트 수정이 적용된 PDF 편집 페이지는 기존 벡터 구조가 이미지로 바뀔 수 있습니다.
-
-PDF 엔진 단위 시험에서 `테스트 OCR 見積書 ABC 123`을 `/ActualText`로 기록한 PDF를 만들고 `pdftotext`로 동일 문자열이 추출되는 것을 확인했습니다.
-
-## PDF 편집
-
-v1.1.6은 구조 편집에 `pdf-lib` 1.17.1 UMD 빌드를 고정 버전 런타임 자산으로 사용하도록 구현했습니다.
-
-지원 흐름:
-
-- PDF 여러 개 추가
-- 각 PDF를 PDF.js로 안전 렌더링해 썸네일 생성
-- 현재 편집 순서대로 페이지 객체 복사 후 합치기
-- Pointer Event 기반 Drag & Drop 순서 변경
-- 번호 입력 순서 변경
-- 다중 선택 / 선택 삭제
-- 선택 페이지만 별도 PDF 추출
-- `1-3, 4-6, 7` 형태 범위별 PDF 나누기
-- 여러 분할 결과는 JSZip으로 ZIP 생성
-- PDF → JPG / PNG
-
-일반 구조 편집 페이지는 원본 페이지 객체를 복사하도록 작성되어 있습니다. 다만 디지털 서명, 문서 수준 메타데이터, 일부 폼/주석 등 모든 PDF 기능의 보존을 보장하지는 않습니다.
-
-`pdf-lib` 1.17.1 UMD가 `window.PDFLib`을 제공하고 `PDFDocument.create/load/copyPages/save` API를 제공하는 구조는 공개 공식 문서와 패키지 정보를 기준으로 확인했습니다. 이 QA 환경은 외부 CDN 런타임 파일을 직접 다운로드해 브라우저 통합 실행하지 못했기 때문에 실제 iPhone PWA에서 여러 PDF를 합치는 end-to-end 시험은 필요합니다.
-
-## 보안 / 오프라인 준비
-
-- `pdf-lib`도 기존 외부 엔진과 동일하게 고정 버전 HTTPS URL → SHA-256 TOFU 잠금 → same-origin 가상 Cache Storage 실행 흐름을 사용합니다.
-- 선택된 OCR 언어 데이터만 오프라인 준비 대상에 포함합니다.
-- Service Worker 활성화 시 이전 `scanbox-*` Cache Storage를 삭제합니다.
-- 앱 시작 시 이전 버전 `scanbox.offline-ready.v*`, `scanbox.vendor-pin.v*` 메타데이터를 정리합니다.
-- 문서 이미지, PDF 원본, OCR 결과, 생성 PDF를 외부 서버로 전송하는 경로는 추가하지 않았습니다.
-
-## 브라우저 런타임 확인 한계
-
-이 컨테이너의 headless Chromium은 환경 문제로 페이지 로딩 전에 timeout되어 DOM 실행 검증에 사용할 수 없었습니다. 따라서 다음은 실제 iPhone Safari / 홈 화면 PWA에서 최종 확인이 필요합니다.
-
-- 스캔 썸네일 Drag & Drop의 터치 감도
-- PDF 편집 썸네일 Drag & Drop
-- pdf-lib 최초 보안 준비 및 PDF 합치기 / 추출 / 나누기
-- KOR / ENG / CHI 각 조합의 OCR 실행
-- `사진에 맞춤` PDF가 실제 iOS 미리보기에서도 흰 여백 없이 보이는지
-- OCR 텍스트 수정 후 iOS PDF 검색/복사 결과
-
-정적 검사와 자체 PDF 생성 엔진 단위 시험은 통과했지만 위 iOS 전용 동작을 100% 보장하는 것은 아닙니다.
+다음 항목은 코드 및 정적 검사만 수행했고 실제 iOS/Android 기기 확인이 필요합니다.
+- iPhone Safari/PWA에서 `≡` 손잡이 장거리 Drag & Drop 감각
+- Galaxy Chrome/PWA에서 Pointer Event 기반 Drag & Drop
+- 미리보기 sheet의 좌우 스와이프 감각
+- 실제 카메라/사진 입력 시 문서 검출 정확도
+- CHI OCR 모델의 실제 초기 다운로드 시간 및 메모리 사용량
+- 대용량/암호화/특수 PDF 구조 편집

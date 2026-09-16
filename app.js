@@ -1,4 +1,4 @@
-/* ScanBox PWA v1.1.6 - Robust Edge-Band Detection + Seamless Perspective
+/* ScanBox PWA v1.1.7 - Robust Edge-Band Detection + Seamless Perspective
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.6';
+  const APP_VERSION = '1.1.7';
   const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
   const THEME_KEY = 'scanbox.theme';
   const OCR_ENABLED_KEY = 'scanbox.ocr.enabled';
@@ -83,6 +83,7 @@
     pdfEditor: { docs: new Map(), pages: [], drag: null, ocrEditPageIds: [] },
     cropEditor: null,
     drag: null,
+    scanPreviewIndex: -1,
     defaultName: '',
   };
 
@@ -100,8 +101,8 @@
       cameraBtn: $('#cameraBtn'), galleryBtn: $('#galleryBtn'),
       cameraInput: $('#cameraInput'), galleryInput: $('#galleryInput'),
       autoCorrectToggle: $('#autoCorrectToggle'), ocrToggle: $('#ocrToggle'), opencvState: $('#opencvState'),
-      ocrLangRow: $('#ocrLangRow'), ocrLangKor: $('#ocrLangKor'), ocrLangEng: $('#ocrLangEng'), ocrLangChi: $('#ocrLangChi'), ocrLangSummary: $('#ocrLangSummary'),
-      pageCount: $('#pageCount'), clearPagesBtn: $('#clearPagesBtn'), emptyPages: $('#emptyPages'), pageList: $('#pageList'), pageThumbSection: $('#pageThumbSection'), pageThumbList: $('#pageThumbList'),
+      ocrLangRow: $('#ocrLangRow'), ocrLangKor: $('#ocrLangKor'), ocrLangEng: $('#ocrLangEng'), ocrLangChi: $('#ocrLangChi'),
+      pageCount: $('#pageCount'), clearPagesBtn: $('#clearPagesBtn'), emptyPages: $('#emptyPages'), pageList: $('#pageList'),
       fileNameInput: $('#fileNameInput'),
       exportFormat: $('#exportFormat'), qualityPreset: $('#qualityPreset'), pdfPageSize: $('#pdfPageSize'), estimatedSize: $('#estimatedSize'),
       ocrPreviewBtn: $('#ocrPreviewBtn'), createOutputBtn: $('#createOutputBtn'),
@@ -110,6 +111,7 @@
       pdfImageFormat: $('#pdfImageFormat'), pdfToImageBtn: $('#pdfToImageBtn'), pdfInput: $('#pdfInput'),
       offlinePrepBtn: $('#offlinePrepBtn'), offlinePrepBadge: $('#offlinePrepBadge'), offlinePrepDetail: $('#offlinePrepDetail'), securityBadge: $('#securityBadge'), securityDetail: $('#securityDetail'), themeMode: $('#themeMode'),
       cropSheet: $('#cropSheet'), cropCanvas: $('#cropCanvas'), cropMagnifier: $('#cropMagnifier'), resetCropBtn: $('#resetCropBtn'), applyCropBtn: $('#applyCropBtn'),
+      scanPreviewSheet: $('#scanPreviewSheet'), scanPreviewStage: $('#scanPreviewStage'), scanPreviewImage: $('#scanPreviewImage'), scanPreviewCounter: $('#scanPreviewCounter'), scanPreviewPrev: $('#scanPreviewPrev'), scanPreviewNext: $('#scanPreviewNext'),
       progressOverlay: $('#progressOverlay'), progressTitle: $('#progressTitle'), progressText: $('#progressText'), progressBar: $('#progressBar'), progressPercent: $('#progressPercent'),
       outputSheet: $('#outputSheet'), outputInfo: $('#outputInfo'), saveOutputBtn: $('#saveOutputBtn'), shareOutputBtn: $('#shareOutputBtn'),
       ocrSheet: $('#ocrSheet'), ocrTextArea: $('#ocrTextArea'), applyOcrTextBtn: $('#applyOcrTextBtn'), copyOcrBtn: $('#copyOcrBtn'), pdfOcrSheet: $('#pdfOcrSheet'), pdfOcrTextArea: $('#pdfOcrTextArea'), applyPdfOcrTextBtn: $('#applyPdfOcrTextBtn'), aboutSheet: $('#aboutSheet'), toast: $('#toast'),
@@ -128,7 +130,7 @@
     bindOfflinePrep();
     bindTheme();
     bindPageDrag();
-    bindThumbDrag();
+    bindScanPreview();
 
     updateNetworkState();
     updateSecurityStatus();
@@ -237,13 +239,15 @@
       if (idx < 0) return;
       const page = state.pages[idx];
       try {
-        if (btn.dataset.action === 'delete') {
+        if (btn.dataset.action === 'preview') {
+          openScanPreview(idx); return;
+        } else if (btn.dataset.action === 'delete') {
           revokePageUrls(page); state.pages.splice(idx, 1);
         } else if (btn.dataset.action === 'rotate') {
           page.rotation = (page.rotation + 90) % 360; invalidateOcr(page); await refreshPreview(page);
         } else if (btn.dataset.action === 'filter') {
           page.filter = btn.dataset.filter;
-          if ((page.filter === 'document' || page.filter === 'bw') && !state.cvReady) prepareOpenCvForCorrection().catch(() => false);
+          if (page.filter === 'document' && !state.cvReady) prepareOpenCvForCorrection().catch(() => false);
           invalidateOcr(page); await refreshPreview(page);
         } else if (btn.dataset.action === 'crop') {
           await openCropEditor(page); return;
@@ -370,7 +374,6 @@
     if (!enabled && els.exportFormat?.value === 'searchable-pdf') els.exportFormat.value = 'pdf';
     if (els.ocrPreviewBtn) els.ocrPreviewBtn.disabled = !enabled || state.pages.length === 0;
     if (els.ocrLangRow) els.ocrLangRow.classList.toggle('disabled', !enabled);
-    if (els.ocrLangSummary) els.ocrLangSummary.textContent = ocrLanguageLabel() || '선택 필요';
     updateEstimatedSize();
   }
 
@@ -385,7 +388,7 @@
     if (!els.pdfPageSize) return;
     let value = 'fit';
     try { value = localStorage.getItem(PDF_PAGE_SIZE_KEY) || 'fit'; } catch {}
-    if (!['fit','a4','a3'].includes(value)) value = 'fit';
+    if (!['fit','a3','a4','a5','b4','b5','letter','legal'].includes(value)) value = 'fit';
     els.pdfPageSize.value = value;
     updatePdfPageSizeUi();
     els.pdfPageSize.addEventListener('change', () => {
@@ -810,12 +813,12 @@
     els.offlinePrepBtn.classList.remove('is-ready','is-warn','is-busy');
     els.offlinePrepBadge.classList.remove('offline-ready','offline-warn');
     if (record?.ready) {
-      els.offlinePrepBadge.textContent = '완료 ✓ · 다시 확인';
+      els.offlinePrepBadge.textContent = '준비 완료 ✓';
       els.offlinePrepBadge.classList.add('offline-ready');
       els.offlinePrepBtn.classList.add('is-ready');
       els.offlinePrepDetail.textContent = record.compatMode
-        ? '필수 엔진 검증 완료 · 문서 보정은 고정밀 호환 엔진 사용'
-        : '필수 엔진 검증과 로컬 캐시 준비 완료';
+        ? '현재 버전 준비 완료 · 문서 보정은 고정밀 호환 엔진 사용'
+        : '현재 버전 엔진 검증과 로컬 캐시 준비 완료';
     } else if (record?.failed) {
       els.offlinePrepBadge.textContent = '확인 필요 · 다시 준비';
       els.offlinePrepBadge.classList.add('offline-warn');
@@ -1144,44 +1147,36 @@
     const count = state.pages.length;
     els.pageCount.textContent = `${count}장`;
     els.emptyPages.classList.toggle('hidden', count > 0);
-    els.pageThumbSection?.classList.toggle('hidden', count === 0);
     els.clearPagesBtn.disabled = count === 0;
     els.ocrPreviewBtn.disabled = count === 0 || !els.ocrToggle?.checked;
     els.createOutputBtn.disabled = count === 0;
 
-    if (els.pageThumbList) {
-      els.pageThumbList.innerHTML = state.pages.map((page, idx) => `
-        <article class="page-thumb-card" data-page-id="${escapeHtml(page.id)}">
-          <div class="thumb-drag-zone" data-thumb-sort-handle title="끌어서 순서 이동">
-            <img src="${escapeHtml(page.previewUrl || '')}" alt="${idx + 1}페이지 썸네일" />
-            <span class="thumb-number">${idx + 1}</span>
-          </div>
-          <div class="thumb-controls">
-            <label><span>순서</span><input class="page-order-input" data-page-order type="number" min="1" max="${count}" value="${idx + 1}" inputmode="numeric" /></label>
-            <button data-thumb-delete class="thumb-delete" aria-label="${idx + 1}페이지 삭제">삭제</button>
-          </div>
-        </article>`).join('');
-    }
-
     els.pageList.innerHTML = state.pages.map((page, idx) => `
       <article class="page-card" data-page-id="${escapeHtml(page.id)}">
-        <div class="page-preview-wrap"><img class="page-preview" src="${escapeHtml(page.previewUrl || '')}" alt="${idx + 1}페이지" /></div>
+        <button class="page-preview-wrap page-preview-button" data-action="preview" aria-label="${idx + 1}페이지 크게 미리보기">
+          <img class="page-preview" src="${escapeHtml(page.previewUrl || '')}" alt="${idx + 1}페이지" />
+          <span class="preview-hint">미리보기</span>
+        </button>
         <div class="page-content">
           <div class="page-head">
-            <button class="drag-handle" data-sort-handle aria-label="페이지 순서 이동">≡</button>
-            <strong>${idx + 1}페이지</strong>
+            <button class="drag-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 끌어서 순서 이동">≡</button>
+            <label class="page-number-inline" aria-label="페이지 순서 번호">
+              <span>[</span><input data-page-order-inline type="number" min="1" max="${count}" value="${idx + 1}" inputmode="numeric" aria-label="${idx + 1}페이지 순서" /><span>] 페이지</span>
+            </label>
             <span class="page-source">${escapeHtml(page.sourceName || '')}</span>
           </div>
           ${page.ocr ? `<span class="ocr-chip">OCR ${page.ocr.words.length.toLocaleString()}단어${page.ocr.editedText != null ? ' · 수정됨' : ''}</span>` : ''}
           <div class="filter-tabs">
-            ${filterButton(page, 'color', '컬러')}${filterButton(page, 'auto', '자동')}${filterButton(page, 'gray', '그레이')}${filterButton(page, 'document', '문서')}${filterButton(page, 'bw', '흑백')}
+            ${filterButton(page, 'color', '컬러')}${filterButton(page, 'bw', '흑백')}${filterButton(page, 'document', '문서')}
           </div>
           <div class="page-actions">
-            <button data-action="crop">영역 조정</button><button data-action="rotate">↻ 회전</button><button data-action="delete" class="danger">삭제</button>
+            <div class="page-action-main"><button data-action="crop">영역 조정</button><button data-action="rotate">↻ 회전</button></div>
+            <button data-action="delete" class="page-delete-button">삭제</button>
           </div>
         </div>
       </article>`).join('');
     updateEstimatedSize();
+    if (state.scanPreviewIndex >= count) closeScanPreview();
   }
 
   function filterButton(page, value, label) {
@@ -1189,6 +1184,12 @@
   }
 
   function bindPageDrag() {
+    els.pageList.addEventListener('change', e => {
+      const input = e.target.closest('[data-page-order-inline]');
+      if (!input || state.busy || state.drag) return;
+      const card = input.closest('[data-page-id]');
+      moveScannerPage(card?.dataset.pageId, input.value);
+    });
     els.pageList.addEventListener('pointerdown', e => {
       const handle = e.target.closest('[data-sort-handle]');
       if (!handle || state.busy) return;
@@ -1234,56 +1235,50 @@
     renderPages();
   }
 
-  function bindThumbDrag() {
-    if (!els.pageThumbList) return;
-    els.pageThumbList.addEventListener('change', e => {
-      const input = e.target.closest('[data-page-order]');
-      if (!input || state.busy || state.drag) return;
-      const card = input.closest('[data-page-id]');
-      moveScannerPage(card?.dataset.pageId, input.value);
+  function bindScanPreview() {
+    if (!els.scanPreviewSheet) return;
+    $$('[data-close-scan-preview]').forEach(el => el.addEventListener('click', closeScanPreview));
+    els.scanPreviewPrev?.addEventListener('click', () => stepScanPreview(-1));
+    els.scanPreviewNext?.addEventListener('click', () => stepScanPreview(1));
+    let startX = null;
+    els.scanPreviewStage?.addEventListener('pointerdown', e => { startX = e.clientX; });
+    els.scanPreviewStage?.addEventListener('pointerup', e => {
+      if (startX == null) return;
+      const dx = e.clientX - startX; startX = null;
+      if (Math.abs(dx) > 55) stepScanPreview(dx < 0 ? 1 : -1);
     });
-    els.pageThumbList.addEventListener('click', e => {
-      const btn = e.target.closest('[data-thumb-delete]');
-      if (!btn || state.busy || state.drag) return;
-      const card = btn.closest('[data-page-id]');
-      const idx = state.pages.findIndex(p => p.id === card?.dataset.pageId);
-      if (idx < 0) return;
-      revokePageUrls(state.pages[idx]);
-      state.pages.splice(idx, 1);
-      renderPages();
-    });
-    els.pageThumbList.addEventListener('pointerdown', e => {
-      const handle = e.target.closest('[data-thumb-sort-handle]');
-      if (!handle || state.busy) return;
-      const card = handle.closest('.page-thumb-card');
-      if (!card) return;
-      e.preventDefault();
-      state.drag = { card, pointerId: e.pointerId, mode: 'thumb' };
-      card.classList.add('dragging');
-      try { handle.setPointerCapture(e.pointerId); } catch {}
-    });
-    window.addEventListener('pointermove', e => {
-      if (!state.drag || state.drag.mode !== 'thumb' || e.pointerId !== state.drag.pointerId) return;
-      e.preventDefault();
-      const { card } = state.drag;
-      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.page-thumb-card');
-      if (!target || target === card || target.parentNode !== els.pageThumbList) return;
-      const rect = target.getBoundingClientRect();
-      const before = e.clientX < rect.left + rect.width / 2;
-      els.pageThumbList.insertBefore(card, before ? target : target.nextSibling);
-    }, { passive: false });
-    const finish = e => {
-      if (!state.drag || state.drag.mode !== 'thumb' || (e.pointerId != null && e.pointerId !== state.drag.pointerId)) return;
-      const { card } = state.drag;
-      card.classList.remove('dragging');
-      const ids = [...els.pageThumbList.querySelectorAll('.page-thumb-card')].map(el => el.dataset.pageId);
-      const byId = new Map(state.pages.map(p => [p.id, p]));
-      state.pages = ids.map(id => byId.get(id)).filter(Boolean);
-      state.drag = null;
-      renderPages();
-    };
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', finish);
+    els.scanPreviewStage?.addEventListener('pointercancel', () => { startX = null; });
+  }
+
+  function openScanPreview(index) {
+    if (!state.pages.length || !els.scanPreviewSheet) return;
+    state.scanPreviewIndex = clamp(index, 0, state.pages.length - 1);
+    updateScanPreview();
+    openSheet(els.scanPreviewSheet);
+  }
+
+  function updateScanPreview() {
+    if (!state.pages.length || state.scanPreviewIndex < 0) return closeScanPreview();
+    state.scanPreviewIndex = clamp(state.scanPreviewIndex, 0, state.pages.length - 1);
+    const page = state.pages[state.scanPreviewIndex];
+    if (els.scanPreviewImage) els.scanPreviewImage.src = page.previewUrl || '';
+    if (els.scanPreviewCounter) els.scanPreviewCounter.textContent = `${state.scanPreviewIndex + 1} / ${state.pages.length} 페이지`;
+    if (els.scanPreviewPrev) els.scanPreviewPrev.disabled = state.scanPreviewIndex <= 0;
+    if (els.scanPreviewNext) els.scanPreviewNext.disabled = state.scanPreviewIndex >= state.pages.length - 1;
+  }
+
+  function stepScanPreview(delta) {
+    if (!state.pages.length) return;
+    const next = clamp(state.scanPreviewIndex + delta, 0, state.pages.length - 1);
+    if (next === state.scanPreviewIndex) return;
+    state.scanPreviewIndex = next;
+    updateScanPreview();
+  }
+
+  function closeScanPreview() {
+    state.scanPreviewIndex = -1;
+    if (els.scanPreviewImage) els.scanPreviewImage.removeAttribute('src');
+    if (els.scanPreviewSheet) closeSheet(els.scanPreviewSheet);
   }
 
   async function normalizeImageFile(fileOrBlob, maxDimension, quality = 0.95) {
@@ -1984,12 +1979,12 @@
   }
 
   function applyFilter(canvas, filter) {
-    if ((filter==='document'||filter==='bw') && state.cvReady && window.cv) {
-      const cv=window.cv;let src,gray,out,rgba;try{src=cv.imread(canvas);gray=new cv.Mat();out=new cv.Mat();rgba=new cv.Mat();cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY,0);if(filter==='document'){cv.GaussianBlur(gray,gray,new cv.Size(3,3),0);cv.adaptiveThreshold(gray,out,255,cv.ADAPTIVE_THRESH_GAUSSIAN_C,cv.THRESH_BINARY,31,13);}else{cv.threshold(gray,out,0,255,cv.THRESH_BINARY+cv.THRESH_OTSU);}cv.cvtColor(out,rgba,cv.COLOR_GRAY2RGBA,0);cv.imshow(canvas,rgba);return;}catch(err){console.warn('OpenCV 필터 실패, JS 필터로 전환',err);}finally{[src,gray,out,rgba].forEach(x=>{try{x?.delete?.();}catch{}});}
+    if (filter==='document' && state.cvReady && window.cv) {
+      const cv=window.cv;let src,gray,out,rgba;try{src=cv.imread(canvas);gray=new cv.Mat();out=new cv.Mat();rgba=new cv.Mat();cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY,0);cv.GaussianBlur(gray,gray,new cv.Size(3,3),0);cv.adaptiveThreshold(gray,out,255,cv.ADAPTIVE_THRESH_GAUSSIAN_C,cv.THRESH_BINARY,31,13);cv.cvtColor(out,rgba,cv.COLOR_GRAY2RGBA,0);cv.imshow(canvas,rgba);return;}catch(err){console.warn('OpenCV 문서 필터 실패, JS 필터로 전환',err);}finally{[src,gray,out,rgba].forEach(x=>{try{x?.delete?.();}catch{}});}
     }
     const ctx=canvas.getContext('2d',{willReadFrequently:true});const image=ctx.getImageData(0,0,canvas.width,canvas.height);const d=image.data;
     let mean=0,count=0;for(let i=0;i<d.length;i+=Math.max(4,Math.floor(d.length/600000/4)*4||4)){mean+=.299*d[i]+.587*d[i+1]+.114*d[i+2];count++;}mean/=Math.max(1,count);
-    for(let i=0;i<d.length;i+=4){const y=.299*d[i]+.587*d[i+1]+.114*d[i+2];if(filter==='gray'){const v=clamp((y-128)*1.12+135,0,255);d[i]=d[i+1]=d[i+2]=v;}else if(filter==='auto'){const lift=128-mean;d[i]=clamp((d[i]+lift*.18-128)*1.08+128,0,255);d[i+1]=clamp((d[i+1]+lift*.18-128)*1.08+128,0,255);d[i+2]=clamp((d[i+2]+lift*.18-128)*1.08+128,0,255);}else{const threshold=clamp(mean*.88,125,205);const v=y>threshold?255:0;d[i]=d[i+1]=d[i+2]=v;}}
+    for(let i=0;i<d.length;i+=4){const y=.299*d[i]+.587*d[i+1]+.114*d[i+2];if(filter==='bw'){const v=clamp(y,0,255);d[i]=d[i+1]=d[i+2]=v;}else if(filter==='document'){const threshold=clamp(mean*.88,125,205);const v=y>threshold?255:0;d[i]=d[i+1]=d[i+2]=v;}}
     ctx.putImageData(image,0,0);
   }
 
@@ -2024,7 +2019,7 @@
   async function buildOcrCanvas(page,maxDimension){
     const canvas=await renderPageToCanvas(page,maxDimension);
     // 저장 이미지와 OCR 입력 이미지를 분리합니다. OCR용 사본만 회색조/대비 정규화를 적용합니다.
-    if(page.filter==='document'||page.filter==='bw')return canvas;
+    if(page.filter==='document')return canvas;
     const ctx=canvas.getContext('2d',{willReadFrequently:true});
     const image=ctx.getImageData(0,0,canvas.width,canvas.height),d=image.data,hist=new Uint32Array(256);
     let pixels=0;

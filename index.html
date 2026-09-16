@@ -38,7 +38,7 @@
 
   <main class="app-shell">
     <section class="intro">
-      <p class="kicker">ScanBox 1.1.6</p>
+      <p class="kicker">ScanBox 1.1.7</p>
       <h1>문서는 깔끔하게.<br />저장은 원하는 형식으로.</h1>
       <p>촬영부터 문서 보정, OCR, 검색 PDF와 PDF 편집까지 기기에서 처리합니다. 고정 버전 엔진은 최초 지문을 생성해 앱 캐시에 잠급니다.</p>
     </section>
@@ -97,10 +97,6 @@
           <strong>스캔할 문서를 추가해 주세요.</strong>
           <span>여러 장의 사진을 한 번에 불러올 수 있습니다.</span>
         </div>
-        <div id="pageThumbSection" class="page-thumb-section hidden">
-          <div class="thumb-section-head"><strong>페이지 순서</strong><span>썸네일을 끌거나 번호를 바꿔 이동</span></div>
-          <div id="pageThumbList" class="page-thumb-list"></div>
-        </div>
         <div id="pageList" class="page-list"></div>
       </section>
 
@@ -139,8 +135,13 @@
             <span>PDF 페이지</span>
             <select id="pdfPageSize">
               <option value="fit">사진에 맞춤</option>
-              <option value="a4">A4</option>
-              <option value="a3">A3</option>
+              <option value="a3">A3 · 297 × 420 mm</option>
+              <option value="a4">A4 · 210 × 297 mm</option>
+              <option value="a5">A5 · 148 × 210 mm</option>
+              <option value="b4">B4 · 257 × 364 mm</option>
+              <option value="b5">B5 · 182 × 257 mm</option>
+              <option value="letter">Letter · 216 × 279 mm</option>
+              <option value="legal">Legal · 216 × 356 mm</option>
             </select>
           </label>
         </div>
@@ -168,9 +169,9 @@
           <button id="pdfClearBtn" class="secondary-mini danger-text" disabled>전체 비우기</button>
         </div>
         <div id="pdfEditorEmpty" class="empty-state compact-empty">
-          <div class="empty-symbol">PDF</div>
-          <strong>합치거나 편집할 PDF를 추가해 주세요.</strong>
-          <span>여러 파일을 한 번에 선택할 수 있습니다.</span>
+          <div class="empty-symbol pdf-empty-symbol">PDF</div>
+          <strong>PDF를 추가해 주세요.</strong>
+          <span>여러 파일을 추가해 합치거나 페이지를 편집할 수 있습니다.</span>
         </div>
         <div id="pdfEditorPages" class="pdf-editor-pages"></div>
       </section>
@@ -224,17 +225,13 @@
           </select>
         </div>
         <div class="settings-row">
-          <div><strong>OCR 언어</strong><span>스캔 탭에서 KOR / ENG / CHI를 각각 선택하며 마지막 선택을 기억합니다.</span></div>
-          <span id="ocrLangSummary" class="value-pill">KOR + ENG</span>
-        </div>
-        <div class="settings-row">
           <div><strong>개인정보 처리</strong><span>문서·이미지·OCR 결과는 브라우저 내부에서 처리하며 ScanBox 서버로 보내지 않습니다.</span></div>
           <span class="value-pill">로컬 처리</span>
         </div>
       </section>
       <section class="info-card">
         <strong>보안 · 오프라인에 대해</strong>
-        <p>최초 준비 시에만 고정 버전 배포 파일을 HTTPS로 받아 SHA-256 지문을 계산하고 잠급니다. 이후에는 앱 전용 캐시 사본을 사용합니다. CDN 파일이 같은 버전 URL에서 달라지면 실행을 중단합니다. iOS가 사이트 데이터를 삭제하면 다시 준비해야 합니다.</p>
+        <p>현재 버전에서 한 번 준비가 끝나면 반복 다운로드할 필요가 없습니다. 고정 버전 엔진을 HTTPS로 받아 SHA-256 지문을 잠그고 앱 전용 캐시를 사용합니다. ScanBox 버전이 바뀌거나 브라우저가 사이트 데이터를 삭제했을 때만 다시 준비하면 됩니다.</p>
       </section>
     </section>
   </main>
@@ -254,6 +251,25 @@
       <div class="progress-top"><span id="progressTitle">처리 중</span><span id="progressPercent">0%</span></div>
       <p id="progressText">파일을 준비하고 있습니다.</p>
       <div class="progress-track"><div id="progressBar"></div></div>
+    </div>
+  </section>
+
+  <section id="scanPreviewSheet" class="sheet hidden" aria-modal="true" role="dialog">
+    <div class="sheet-backdrop" data-close-scan-preview></div>
+    <div class="sheet-panel scan-preview-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-heading">
+        <div><h3>스캔 미리보기</h3><p id="scanPreviewCounter">1 / 1 페이지</p></div>
+        <button class="round-button" data-close-scan-preview>×</button>
+      </div>
+      <div id="scanPreviewStage" class="scan-preview-stage">
+        <img id="scanPreviewImage" alt="편집된 스캔 페이지 미리보기" />
+      </div>
+      <div class="scan-preview-nav">
+        <button id="scanPreviewPrev" class="secondary-button">이전</button>
+        <button id="scanPreviewNext" class="secondary-button">다음</button>
+      </div>
+      <p class="preview-note">영역 보정·회전·필터가 적용된 현재 스캔 이미지를 보여줍니다.</p>
     </div>
   </section>
 
@@ -295,12 +311,12 @@
     <div class="sheet-backdrop" data-close-about></div>
     <div class="sheet-panel tall-sheet">
       <div class="sheet-handle"></div>
-      <div class="sheet-heading"><div><h3>ScanBox 1.1.6</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
+      <div class="sheet-heading"><div><h3>ScanBox 1.1.7</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
       <div class="about-copy">
         <h4>1. 촬영</h4><p>자동 보정이 켜져 있으면 문서 테두리를 찾아 원근을 보정합니다. 결과가 마음에 들지 않으면 각 페이지의 ‘영역 조정’에서 네 모서리를 직접 옮길 수 있습니다.</p>
-        <h4>2. 정리</h4><p>스캔 페이지는 썸네일을 끌거나 번호를 바꿔 순서를 정리할 수 있습니다. PDF 편집 탭에서도 같은 방식으로 페이지를 재배열할 수 있습니다.</p>
+        <h4>2. 정리</h4><p>스캔 페이지의 ≡ 손잡이를 끌거나 [번호] 페이지의 숫자를 바꿔 순서를 정리할 수 있습니다. 페이지 이미지를 누르면 편집된 모습을 크게 미리 볼 수 있습니다. PDF 편집 탭에서도 페이지를 재배열할 수 있습니다.</p>
         <h4>3. OCR · 검색 PDF</h4><p>OCR은 기본 OFF이며 마지막 선택을 기억합니다. KOR / ENG / CHI를 독립 선택할 수 있고 OCR 텍스트를 교정해 검색 PDF에 반영할 수 있습니다.</p>
-        <h4>4. 저장</h4><p>파일을 만든 뒤 ‘공유 / 파일에 저장’을 누르면 iOS 공유 시트를 통해 iCloud Drive, 나의 iPhone, AirDrop, 메일 등으로 보낼 수 있습니다.</p>
+        <h4>4. 저장</h4><p>파일을 만든 뒤 ‘공유 / 파일에 저장’을 누르면 iPhone이나 Android의 시스템 공유 메뉴를 통해 파일 앱, 클라우드, 메일 등으로 보낼 수 있습니다.</p>
         <h4>5. 보안</h4><p>문서 데이터는 ScanBox 서버로 전송하지 않습니다. OCR·PDF 엔진은 버전을 고정하고 최초 SHA-256 지문을 잠근 뒤 앱 전용 캐시에서 실행합니다. 문서 보정은 OpenCV 가속이 실패해도 내장 호환 엔진으로 계속 사용할 수 있습니다.</p>
       </div>
     </div>

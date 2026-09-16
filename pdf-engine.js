@@ -160,7 +160,7 @@
     if (!pages.length) throw new Error('PDF에 넣을 페이지가 없습니다.');
     const searchable = !!(options && options.searchable);
     const title = String(options && options.title || 'ScanBox');
-    const pageSize = ['fit','a4','a3'].includes(options && options.pageSize) ? options.pageSize : 'fit';
+    const pageSize = ['fit','a3','a4','a5','b4','b5','letter','legal'].includes(options && options.pageSize) ? options.pageSize : 'fit';
     const writer = new PdfWriter();
 
     const pagesRootId = writer.add('<<>>');
@@ -194,7 +194,17 @@
         else { pw = longEdge; ph = longEdge * (imgH / imgW); }
         dw = pw; dh = ph;
       } else {
-        const base = pageSize === 'a3' ? [841.89, 1190.551] : [595.276, 841.89];
+        // points (1 pt = 1/72 in). B4/B5는 국내 복합기에서 흔한 JIS 규격을 사용합니다.
+        const PAGE_POINTS = {
+          a3: [841.89, 1190.551],
+          a4: [595.276, 841.89],
+          a5: [419.528, 595.276],
+          b4: [728.504, 1031.811],   // 257 × 364 mm
+          b5: [515.906, 728.504],    // 182 × 257 mm
+          letter: [612, 792],
+          legal: [612, 1008],
+        };
+        const base = PAGE_POINTS[pageSize] || PAGE_POINTS.a4;
         pw = portrait ? base[0] : base[1];
         ph = portrait ? base[1] : base[0];
         // 사용자가 규격을 명시적으로 선택한 경우 여백 없이 페이지 전체를 채웁니다.
