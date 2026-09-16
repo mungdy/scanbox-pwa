@@ -24,3 +24,63 @@ button,input,select,textarea{font:inherit} button{cursor:pointer} button:disable
 @media(max-width:430px){.network-dot span{display:none}.intro h1{font-size:30px}.page-card{grid-template-columns:1fr}.page-preview-wrap{height:220px}.two-fields,.export-actions,.sheet-actions{grid-template-columns:1fr}.tool-row{grid-template-columns:44px 1fr 62px}.tool-badge{width:44px;height:44px}.page-source{max-width:38%}}
 
 .secure-pill{background:#e8f7ee!important;color:#147a3d!important}
+
+/* v1.1.2 theme + settings */
+.settings-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.settings-select{height:40px;min-width:104px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--text);padding:0 10px;font-weight:700;font-size:12px;outline:none}
+.offline-ready{background:#e8f7ee!important;color:#147a3d!important}.offline-warn{background:#fff4e5!important;color:#b45309!important}
+
+:root[data-theme="dark"]{
+  --bg:#0f1115;--surface:#171a21;--text:#f2f4f6;--sub:#9aa5b1;--line:#2a3039;
+  --blue:#4c9aff;--blue-soft:#142338;--danger:#ff6b78;--success:#34c985;
+  --shadow:0 8px 30px rgba(0,0,0,.22);color-scheme:dark;
+}
+:root[data-theme="dark"] html,:root[data-theme="dark"] body{background:var(--bg);color:var(--text)}
+:root[data-theme="dark"] .app-header{background:rgba(15,17,21,.88);border-bottom-color:rgba(42,48,57,.88)}
+:root[data-theme="dark"] .round-button,
+:root[data-theme="dark"] .mini-button,
+:root[data-theme="dark"] .secondary-button,
+:root[data-theme="dark"] .action-icon,
+:root[data-theme="dark"] .drag-handle,
+:root[data-theme="dark"] .filter-btn,
+:root[data-theme="dark"] .page-actions button,
+:root[data-theme="dark"] .value-pill,
+:root[data-theme="dark"] .tool-badge{background:#232831!important;color:#c7d0da!important}
+:root[data-theme="dark"] .segmented{background:#1c2027}
+:root[data-theme="dark"] .segment{color:#8f9aa6}
+:root[data-theme="dark"] .segment.active{background:#2a3039;color:var(--text);box-shadow:0 2px 8px rgba(0,0,0,.28)}
+:root[data-theme="dark"] .quick-action,
+:root[data-theme="dark"] .soft-card,
+:root[data-theme="dark"] .empty-state,
+:root[data-theme="dark"] .page-card,
+:root[data-theme="dark"] .tool-row,
+:root[data-theme="dark"] .progress-card,
+:root[data-theme="dark"] .sheet-panel{background:var(--surface);color:var(--text)}
+:root[data-theme="dark"] .quick-action.primary-action{background:var(--blue);color:#fff}
+:root[data-theme="dark"] .quick-action small,:root[data-theme="dark"] .empty-state,:root[data-theme="dark"] .privacy-note{color:var(--sub)}
+:root[data-theme="dark"] .empty-state strong{color:#d7dde4}
+:root[data-theme="dark"] .page-preview-wrap,:root[data-theme="dark"] .toggle-line i{background:#232831}
+:root[data-theme="dark"] .toggle-line i:after{background:#e9edf2}
+:root[data-theme="dark"] .field-group input,
+:root[data-theme="dark"] .field-group select,
+:root[data-theme="dark"] .two-fields select,
+:root[data-theme="dark"] .tool-row select,
+:root[data-theme="dark"] .settings-select,
+:root[data-theme="dark"] #ocrTextArea{background:#111419;border-color:var(--line);color:var(--text)}
+:root[data-theme="dark"] .settings-row{border-bottom-color:#242a32}
+:root[data-theme="dark"] .info-card{background:#142338}
+:root[data-theme="dark"] .info-card p{color:#aab6c3}
+:root[data-theme="dark"] .filter-btn.active,:root[data-theme="dark"] .suggestion-chip{background:#18365a;color:#80b9ff}
+:root[data-theme="dark"] .ocr-chip{background:#123629;color:#57d99b}
+:root[data-theme="dark"] .secure-pill,:root[data-theme="dark"] .offline-ready{background:#123629!important;color:#57d99b!important}
+:root[data-theme="dark"] .offline-warn{background:#3a2a13!important;color:#ffc46b!important}
+:root[data-theme="dark"] .progress-track{background:#2a3039}
+:root[data-theme="dark"] .sheet-handle{background:#3a414d}
+:root[data-theme="dark"] .success-mark{background:#123629;color:#57d99b}
+:root[data-theme="dark"] .overlay{background:rgba(0,0,0,.56)}
+:root[data-theme="dark"] .sheet-backdrop{background:rgba(0,0,0,.62)}
+:root[data-theme="dark"] .crop-stage{background:#050607}
+:root[data-theme="dark"] .toast{background:rgba(242,244,246,.94);color:#171a21}
+@media(max-width:430px){.settings-actions{flex-direction:column;align-items:flex-end;gap:6px}.settings-select{min-width:92px}}
+.settings-row>.settings-actions{flex:0 0 auto;display:flex;align-items:center;gap:8px}
+@media(max-width:430px){.settings-row>.settings-actions{flex-direction:column;align-items:flex-end;gap:6px}}

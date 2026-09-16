@@ -1,53 +1,75 @@
-# ScanBox PWA v1.1.1 QA Report
+# ScanBox PWA v1.1.2 QA Report
 
 검토일: 2026-09-16 KST
 
-## 통과한 정적 검사
+## 이번 수정의 핵심 검증
 
-- `app.js`, `secure-runtime.js`, `pdf-engine.js`, `sw.js`, 로컬 JSZip JavaScript 문법 검사
-- `manifest.webmanifest` JSON 파싱
-- HTML 중복 ID 0개 및 JavaScript DOM 참조 연결 검사
-- 원격 `<script src>` 0개 확인
-- Service Worker app shell 필수 파일 존재 확인
-- CSP, iframe 런타임 차단, PDF.js `isEvalSupported:false`, `useWasm:false`, `enableXfa:false` 적용 확인
-- SVG/SVGZ 입력 차단, PDF `%PDF-` signature, 파일/페이지/캔버스 상한 확인
-- JPEG/PNG/WEBP 헤더 기반 해상도 사전 검사: 한 변 12,000 px / 약 50 MP 상한
-- PDF 분석 및 개별 페이지 렌더링 30초 타임아웃
-- 앱 자체 코드의 `eval`, `new Function`, XHR, WebSocket, `sendBeacon`, `document.write` 부재 확인
-- Service Worker가 cross-origin 응답을 캐시하지 않는 구조 확인
-- 프로젝트에 폰트 파일을 포함하지 않음
+- OpenCV 5.x 초기화가 `Promise` 객체인지 여부만 보지 않고 `then` 가능 객체(thenable)까지 기다리도록 수정했습니다.
+- OpenCV 가속 엔진이 실패해도 `detectDocumentCornersJs()`와 `warpDocumentJs()`가 자동으로 사용되는 것을 정적 검사했습니다.
+- 수동 4점 영역 조정에서 OpenCV 준비 여부 때문에 진입을 차단하던 조건을 제거했습니다.
+- 내장 자동 문서 감지 알고리즘을 400 × 300 합성 이미지의 기울어진 사각 문서로 계산 테스트했습니다. 예상 모서리 `(55,40) / (340,25) / (365,255) / (38,270)`에 대해 `(52,37) / (343,23) / (367,258) / (36,272)`를 검출했습니다.
+- 내장 원근 보정의 unit-square → quadrilateral projective mapping이 네 입력 모서리를 정확히 다시 매핑하는 수치 테스트를 통과했습니다.
 
-## 검색 가능한 PDF 엔진 테스트
+## UI / 상태 검증
 
-`pdf-engine.js`로 JPEG 1페이지와 한국어/영문 OCR 단어 좌표를 넣은 테스트 PDF를 생성해 로컬 PDF 검사 도구로 확인했습니다.
+- 설정에 `시스템 / 라이트 / 다크` 화면 모드가 연결되어 있습니다.
+- 화면 모드는 `localStorage`에 저장되며 초기 렌더 전에 `theme-init.js`가 적용합니다.
+- 다크 모드용 배경, 카드, 입력, 시트, 진행창, 배지 색상 정의를 확인했습니다.
+- `보안 · 오프라인 준비` 상태는 `준비 전 / 준비 중 / 완료 ✓ / 확인 필요`로 구분됩니다.
+- 성공 상태는 앱 버전별 키로 저장되어 재실행 후에도 `완료 ✓`를 표시합니다.
+- OpenCV 가속만 실패하고 OCR/PDF 필수 항목이 성공한 경우에는 전체 준비를 실패로 처리하지 않고 내장 문서 보정 엔진 사용을 안내합니다.
 
-- PDF 1.7, A4 1페이지
-- JavaScript: 없음
-- Form: 없음
-- Encryption: 없음
-- 텍스트 추출: `한글테스트`, `공급가액`, `ABC`, `1,200,000원` 확인
+## 자동 정적 검사
 
-테스트용 임시 파일은 배포 ZIP에 포함하지 않습니다.
+다음 21개 항목을 자동 검사했고 모두 통과했습니다.
 
-## 공급망 검사 범위
+- HTML 중복 ID 없음
+- JavaScript DOM 참조 누락 없음
+- 원격 `<script src>` 없음
+- 화면 모드 selector 존재
+- 다크 테마 CSS 존재
+- 오프라인 준비 완료 배지/설명 존재
+- 오프라인 준비 상태 영속화 로직 존재
+- OpenCV thenable 처리 존재
+- 내장 JS 문서 모서리 검출 존재
+- 내장 JS 원근 보정 존재
+- 수동 영역 조정 OpenCV 차단 문구 제거
+- OpenCV가 필수 오프라인 준비 항목에서 분리됨
+- Service Worker 버전 1.1.2
+- 보안 런타임 버전 1.1.2
+- `theme-init.js` Service Worker app shell 포함
+- CSP 존재
+- PDF.js eval 비활성화
+- SVG 입력 차단
+- 앱 자체 코드에 XHR / WebSocket / sendBeacon 직접 전송 경로 없음
+- manifest 버전명 1.1.2
+- Service Worker app shell 파일 누락 없음
 
-- OpenCV/Tesseract/PDF.js는 정확한 패키지 버전 URL로 고정
-- 허용 네트워크 호스트는 최초 엔진 준비용 `cdn.jsdelivr.net`으로 제한
-- redirect 최종 목적지도 동일 allowlist로 재검증
-- HTML 응답을 엔진 파일로 오인해 실행하지 않도록 차단
-- 최초 SHA-256 지문을 잠그고 이후 동일 버전 내용 변경 시 실행 중단
+`app.js`, `secure-runtime.js`, `pdf-engine.js`, `sw.js`, `theme-init.js`, 로컬 JSZip은 모두 JavaScript 문법 검사를 통과했습니다.
 
-단, 사전 등록된 upstream SHA-256을 포함하는 구조는 아니므로 최초 정상 다운로드를 신뢰하는 TOFU 방식입니다.
+## 검색 가능한 PDF 엔진 재검증
+
+`pdf-engine.js`로 JPEG 1페이지와 한국어/영문 OCR 단어 좌표를 넣은 테스트 PDF를 다시 생성했습니다.
+
+- PDF 1.7
+- A4 1페이지
+- JavaScript 없음
+- 암호화 없음
+- 텍스트 추출: `한글테스트`, `ABC` 확인
+
+테스트용 PDF는 배포 ZIP에 포함하지 않습니다.
 
 ## 실기 테스트 한계
 
-이 환경에서는 실제 iPhone Safari의 카메라, PWA 홈 화면 설치, iOS 공유 시트를 직접 조작할 수 없습니다. 따라서 아래는 사용자 기기에서 최종 확인이 필요합니다.
+현재 작업 환경에서는 실제 iPhone Safari/PWA의 카메라, WebKit WASM, 홈 화면 PWA, iOS 공유 시트를 직접 조작할 수 없습니다. 따라서 아래 항목은 사용자 기기에서 최종 확인이 필요합니다.
 
-- 카메라 호출
-- OpenCV 최초 준비 및 자동/수동 문서 보정
-- Tesseract 한국어 + 영어 OCR
-- PDF.js PDF 불러오기/편집
-- iOS 공유 시트 및 `파일에 저장`
-- 홈 화면 PWA 업데이트/오프라인 재실행
+- 카메라 촬영 후 자동 문서 감지
+- 실제 사진에서 내장 fallback 감지 품질
+- 수동 네 모서리 드래그 후 원근 보정
+- OpenCV 가속 엔진 초기화 여부
+- 보안 · 오프라인 준비 완료 상태
+- 다크/라이트 전환 후 PWA 재실행 상태 유지
+- 한국어 + 영어 OCR
+- iOS 공유 / 파일에 저장
 
-정적 검증과 PDF 생성 smoke test는 통과했지만, 실제 iOS 런타임 호환성을 100% 보장한다는 의미는 아닙니다.
+v1.1.2에서는 OpenCV가 실패해도 수동 영역 조정과 문서 보정 기능 자체가 차단되지 않도록 장애 격리를 적용했습니다.

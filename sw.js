@@ -1,9 +1,9 @@
 'use strict';
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 const APP_CACHE = `scanbox-app-v${VERSION}`;
 const RUNTIME_CACHE = `scanbox-runtime-v${VERSION}`;
 const APP_SHELL = [
-  './','./index.html','./styles.css','./app.js','./secure-runtime.js','./pdf-engine.js',
+  './','./index.html','./theme-init.js','./styles.css','./app.js','./secure-runtime.js','./pdf-engine.js',
   './vendor/jszip/jszip.min.js','./manifest.webmanifest',
   './icons/icon-192.png','./icons/icon-512.png','./icons/apple-touch-icon.png'
 ];

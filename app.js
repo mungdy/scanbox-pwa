@@ -1,4 +1,4 @@
-/* ScanBox PWA v1.1.1 - Security Hardened
+/* ScanBox PWA v1.1.2 - Security Hardened + iOS Compatibility
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
@@ -7,7 +7,9 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.1';
+  const APP_VERSION = '1.1.2';
+  const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
+  const THEME_KEY = 'scanbox.theme';
   const DETECT_MAX = 1300;
   const IMPORT_MAX = 5200;
   const PDFJS_VERSION = '6.3.289';
@@ -55,6 +57,7 @@
     `tesseract/core/${file}`
   ));
   const ALL_RUNTIME_ASSETS = [SOURCES.opencv, SOURCES.tesseractMain, SOURCES.tesseractWorker, ...TESS_CORE_ASSETS, SOURCES.kor, SOURCES.eng, SOURCES.pdfjsMain, SOURCES.pdfjsWorker];
+  const ESSENTIAL_RUNTIME_ASSETS = [SOURCES.tesseractMain, SOURCES.tesseractWorker, ...TESS_CORE_ASSETS, SOURCES.kor, SOURCES.eng, SOURCES.pdfjsMain, SOURCES.pdfjsWorker];
 
   const state = {
     pages: [],
@@ -93,7 +96,7 @@
       ocrPreviewBtn: $('#ocrPreviewBtn'), createOutputBtn: $('#createOutputBtn'),
       pdfImageFormat: $('#pdfImageFormat'), pdfToImageBtn: $('#pdfToImageBtn'), pdfInput: $('#pdfInput'),
       imagePdfMode: $('#imagePdfMode'), imagesToPdfBtn: $('#imagesToPdfBtn'), imagesForPdfInput: $('#imagesForPdfInput'),
-      offlinePrepBtn: $('#offlinePrepBtn'), securityBadge: $('#securityBadge'), securityDetail: $('#securityDetail'),
+      offlinePrepBtn: $('#offlinePrepBtn'), offlinePrepBadge: $('#offlinePrepBadge'), offlinePrepDetail: $('#offlinePrepDetail'), securityBadge: $('#securityBadge'), securityDetail: $('#securityDetail'), themeMode: $('#themeMode'),
       cropSheet: $('#cropSheet'), cropCanvas: $('#cropCanvas'), resetCropBtn: $('#resetCropBtn'), applyCropBtn: $('#applyCropBtn'),
       progressOverlay: $('#progressOverlay'), progressTitle: $('#progressTitle'), progressText: $('#progressText'), progressBar: $('#progressBar'), progressPercent: $('#progressPercent'),
       outputSheet: $('#outputSheet'), outputInfo: $('#outputInfo'), saveOutputBtn: $('#saveOutputBtn'), shareOutputBtn: $('#shareOutputBtn'),
@@ -109,10 +112,12 @@
     bindSheets();
     bindCropEditor();
     bindOfflinePrep();
+    bindTheme();
     bindPageDrag();
 
     updateNetworkState();
     updateSecurityStatus();
+    updateOfflinePrepStatus();
     window.addEventListener('online', updateNetworkState);
     window.addEventListener('offline', updateNetworkState);
     els.exportFormat.addEventListener('change', updateEstimatedSize);
@@ -131,10 +136,10 @@
     }
 
     renderPages();
-    els.opencvState.textContent = '문서 보정 엔진 · 필요할 때 보안 로딩';
+    els.opencvState.textContent = '문서 보정 · 내장 호환 엔진 준비됨 · OpenCV 가속은 필요 시 로딩';
     els.opencvState.className = 'engine-state';
     window.addEventListener('pagehide', cleanupRuntime);
-    console.info(`ScanBox PWA v${APP_VERSION} Security Hardened`);
+    console.info(`ScanBox PWA v${APP_VERSION} Security Hardened + Compatibility Fallback`);
   }
 
 
@@ -190,7 +195,7 @@
           page.rotation = (page.rotation + 90) % 360; invalidateOcr(page); await refreshPreview(page);
         } else if (btn.dataset.action === 'filter') {
           page.filter = btn.dataset.filter;
-          if ((page.filter === 'document' || page.filter === 'bw') && !state.cvReady) await waitForCv(5000);
+          if ((page.filter === 'document' || page.filter === 'bw') && !state.cvReady && !state.cvFailed) waitForCv(2000).catch(() => false);
           invalidateOcr(page); await refreshPreview(page);
         } else if (btn.dataset.action === 'crop') {
           await openCropEditor(page); return;
@@ -294,12 +299,72 @@
     });
   }
 
+  function bindTheme() {
+    if (!els.themeMode) return;
+    let pref = 'system';
+    try { pref = localStorage.getItem(THEME_KEY) || document.documentElement.dataset.themePreference || 'system'; } catch {}
+    if (!['system','light','dark'].includes(pref)) pref = 'system';
+    els.themeMode.value = pref;
+    applyTheme(pref, false);
+    els.themeMode.addEventListener('change', () => applyTheme(els.themeMode.value, true));
+    try {
+      const mq = matchMedia('(prefers-color-scheme: dark)');
+      mq.addEventListener?.('change', () => {
+        if ((els.themeMode?.value || 'system') === 'system') applyTheme('system', false);
+      });
+    } catch {}
+  }
+
+  function applyTheme(pref, persist = true) {
+    if (!['system','light','dark'].includes(pref)) pref = 'system';
+    const dark = pref === 'dark' || (pref === 'system' && !!globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    const actual = dark ? 'dark' : 'light';
+    document.documentElement.dataset.themePreference = pref;
+    document.documentElement.dataset.theme = actual;
+    if (persist) { try { localStorage.setItem(THEME_KEY, pref); } catch {} }
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = dark ? '#0f1115' : '#ffffff';
+    const status = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+    if (status) status.content = dark ? 'black-translucent' : 'default';
+  }
+
+  function readOfflinePrepRecord() {
+    try { return JSON.parse(localStorage.getItem(OFFLINE_READY_KEY) || 'null'); } catch { return null; }
+  }
+
+  function writeOfflinePrepRecord(record) {
+    try { localStorage.setItem(OFFLINE_READY_KEY, JSON.stringify(record)); } catch {}
+  }
+
+  function updateOfflinePrepStatus(record = readOfflinePrepRecord()) {
+    if (!els.offlinePrepBadge || !els.offlinePrepBtn || !els.offlinePrepDetail) return;
+    els.offlinePrepBadge.classList.remove('offline-ready','offline-warn');
+    if (record?.ready) {
+      els.offlinePrepBadge.textContent = '완료 ✓';
+      els.offlinePrepBadge.classList.add('offline-ready');
+      els.offlinePrepBtn.textContent = '다시 확인';
+      const note = record.compatMode ? ' 문서 보정은 내장 호환 엔진으로 준비되었습니다.' : ' 모든 엔진 검증이 완료되었습니다.';
+      els.offlinePrepDetail.textContent = `보안 · 오프라인 준비 완료.${note}`;
+    } else if (record?.failed) {
+      els.offlinePrepBadge.textContent = '확인 필요';
+      els.offlinePrepBadge.classList.add('offline-warn');
+      els.offlinePrepBtn.textContent = '다시 준비';
+      els.offlinePrepDetail.textContent = `${record.failed}개 필수 구성 요소 준비에 실패했습니다. 인터넷 연결 후 다시 준비해 주세요.`;
+    } else {
+      els.offlinePrepBadge.textContent = '준비 전';
+      els.offlinePrepBtn.textContent = '준비';
+      els.offlinePrepDetail.textContent = 'OCR·PDF 엔진을 로컬 캐시에 준비하고 무결성 지문을 잠급니다. 문서 보정은 내장 호환 엔진으로도 동작합니다.';
+    }
+  }
+
   function bindOfflinePrep() {
     els.offlinePrepBtn.addEventListener('click', async () => {
       if (!('serviceWorker' in navigator)) return showToast('이 브라우저에서는 보안 오프라인 준비를 지원하지 않습니다.');
       if (!window.ScanBoxRuntime) return showToast('보안 런타임을 불러오지 못했습니다.');
       if (state.busy) return;
       state.busy = true;
+      if (els.offlinePrepBadge) { els.offlinePrepBadge.textContent = '준비 중'; els.offlinePrepBadge.classList.remove('offline-ready','offline-warn'); }
+      if (els.offlinePrepDetail) els.offlinePrepDetail.textContent = '앱 파일과 필수 엔진을 확인하고 있습니다. 완료될 때까지 앱을 닫지 마세요.';
       try {
         const reg = await navigator.serviceWorker.ready;
         const worker = reg.active || reg.waiting || reg.installing;
@@ -308,6 +373,7 @@
         worker.postMessage({ type: 'PREPARE_OFFLINE' });
       } catch (err) {
         state.busy = false;
+        const record={ready:false,failed:1,at:Date.now(),version:APP_VERSION}; writeOfflinePrepRecord(record); updateOfflinePrepStatus(record);
         handleError(err, '보안 오프라인 준비를 시작하지 못했습니다.');
       }
     });
@@ -317,48 +383,71 @@
     const data = e.data || {};
     if (data.type === 'OFFLINE_PROGRESS') updateProgress(data.percent || 0, data.label || '앱 파일 저장 중');
     if (data.type === 'OFFLINE_DONE') warmOfflineEngines(data.failures || 0);
-    if (data.type === 'OFFLINE_ERROR') { state.busy = false; hideProgress(); showToast(`일부 앱 파일 저장 실패: ${data.label || '네트워크를 확인해 주세요.'}`); }
+    if (data.type === 'OFFLINE_ERROR') { state.busy = false; hideProgress(); const record={ready:false,failed:1,at:Date.now(),version:APP_VERSION}; writeOfflinePrepRecord(record); updateOfflinePrepStatus(record); showToast(`일부 앱 파일 저장 실패: ${data.label || '네트워크를 확인해 주세요.'}`); }
   }
 
   async function warmOfflineEngines(baseFailures = 0) {
-    let failures = baseFailures;
-    try {
-      const rt = window.ScanBoxRuntime;
-      if (!rt) throw new Error('보안 런타임이 없습니다.');
-      updateProgress(20, '엔진 파일의 최초 SHA-256 지문을 만들고 보안 캐시에 저장 중');
-      await rt.warmAssets(ALL_RUNTIME_ASSETS, (p, item) => {
-        updateProgress(20 + p * 62, `${item?.name || '엔진'} 지문 생성 · 저장 중`);
-      });
-    } catch (err) {
-      failures++;
-      console.warn('Secure runtime warm failed', err);
+    let essentialFailures = baseFailures;
+    let compatMode = false;
+    const rt = window.ScanBoxRuntime;
+
+    if (!rt) {
+      essentialFailures++;
+    } else {
+      for (let i = 0; i < ESSENTIAL_RUNTIME_ASSETS.length; i++) {
+        const item = ESSENTIAL_RUNTIME_ASSETS[i];
+        try {
+          const base = 20 + (i / ESSENTIAL_RUNTIME_ASSETS.length) * 54;
+          const span = 54 / ESSENTIAL_RUNTIME_ASSETS.length;
+          await rt.ensureAsset({ ...item, onProgress: p => updateProgress(base + span * (p || 0), `${item.name} 지문 생성 · 저장 중`) });
+        } catch (err) {
+          essentialFailures++;
+          console.warn('필수 런타임 준비 실패:', item.name, err);
+        }
+      }
+
+      // OpenCV는 가속 엔진입니다. 실패해도 내장 JS 보정 엔진으로 스캔/4점 보정이 계속 동작합니다.
+      try {
+        updateProgress(75, '문서 보정 가속 엔진 확인 중');
+        await rt.ensureAsset(SOURCES.opencv);
+        await ensureOpenCv();
+      } catch (err) {
+        compatMode = true;
+        console.warn('OpenCV 가속 준비 실패 · 내장 호환 엔진 사용:', err);
+        state.cvFailed = true;
+        els.opencvState.textContent = '문서 보정 · 내장 호환 엔진 사용 가능';
+        els.opencvState.className = 'engine-state ok';
+      }
     }
 
     try {
-      updateProgress(84, '문서 보정 엔진 검증 중');
-      await ensureOpenCv();
-    } catch (err) { failures++; console.warn('OpenCV warm failed', err); }
-
-    try {
-      updateProgress(88, '한국어 · 영어 OCR 모델 초기화 중');
+      updateProgress(82, '한국어 · 영어 OCR 모델 초기화 중');
       const worker = await getOcrWorker(m => {
-        if (m.status === 'loading language traineddata') updateProgress(88 + (m.progress || 0) * 7, 'OCR 언어 모델 준비 중');
+        if (m.status === 'loading language traineddata') updateProgress(82 + (m.progress || 0) * 10, 'OCR 언어 모델 준비 중');
       });
       if (state.ocrWorkerTimer) { clearTimeout(state.ocrWorkerTimer); state.ocrWorkerTimer = null; }
       try { await worker.terminate(); } catch {}
       state.ocrWorker = null;
-    } catch (err) { failures++; console.warn('OCR warm failed', err); }
+    } catch (err) { essentialFailures++; console.warn('OCR warm failed', err); }
 
     try {
-      updateProgress(96, 'PDF 안전 렌더링 엔진 확인 중');
+      updateProgress(94, 'PDF 안전 렌더링 엔진 확인 중');
       await getPdfJs();
-    } catch (err) { failures++; console.warn('PDF.js warm failed', err); }
+    } catch (err) { essentialFailures++; console.warn('PDF.js warm failed', err); }
 
-    updateProgress(100, failures ? '준비 완료 · 일부 항목 확인 필요' : '보안 · 오프라인 준비 완료');
+    const ready = essentialFailures === 0;
+    updateProgress(100, ready ? '보안 · 오프라인 준비 완료' : '준비 완료 · 일부 필수 항목 확인 필요');
     state.busy = false;
-    updateSecurityStatus(failures ? '확인 필요' : '강화', failures ? `${failures}개 구성 요소 준비에 실패했습니다. 인터넷 연결 후 다시 준비해 주세요.` : '실행 엔진의 최초 SHA-256 지문 잠금과 앱 전용 로컬 캐시 준비가 완료되었습니다.');
-    setTimeout(hideProgress, 650);
-    showToast(failures ? `준비 완료 · ${failures}개 항목은 다시 시도해 주세요.` : '보안 · 오프라인 사용 준비가 완료되었습니다.');
+    const record = ready
+      ? { ready: true, at: Date.now(), compatMode, version: APP_VERSION }
+      : { ready: false, failed: essentialFailures, at: Date.now(), version: APP_VERSION };
+    writeOfflinePrepRecord(record);
+    updateOfflinePrepStatus(record);
+    updateSecurityStatus(ready ? '강화' : '확인 필요', ready
+      ? (compatMode ? '필수 OCR·PDF 엔진 무결성 잠금 완료. 문서 보정은 내장 호환 엔진을 사용합니다.' : '실행 엔진의 최초 SHA-256 지문 잠금과 앱 전용 로컬 캐시 준비가 완료되었습니다.')
+      : `${essentialFailures}개 필수 구성 요소 준비에 실패했습니다. 인터넷 연결 후 다시 준비해 주세요.`);
+    setTimeout(hideProgress, 850);
+    showToast(ready ? '보안 · 오프라인 준비가 완료되었습니다.' : `필수 구성 요소 ${essentialFailures}개를 다시 확인해 주세요.`);
   }
 
   async function validateImageBatch(files, existingPages = 0) {
@@ -470,20 +559,30 @@
     state.cvPromise = (async () => {
       try {
         if (!window.ScanBoxRuntime) throw new Error('보안 런타임을 불러오지 못했습니다.');
-        els.opencvState.textContent = '문서 보정 엔진 · SHA-256 확인 중';
+        els.opencvState.textContent = '문서 보정 가속 엔진 · 초기화 중';
         els.opencvState.className = 'engine-state';
         await window.ScanBoxRuntime.loadScript({ ...SOURCES.opencv, globalCheck: () => !!window.cv });
-        if (window.cv instanceof Promise) window.cv = await window.cv;
-        if (!window.cv?.Mat) throw new Error('OpenCV 초기화 실패');
+
+        // OpenCV 5.x는 Promise/thenable로 노출될 수 있습니다. instanceof Promise만으로 판별하면
+        // Safari 등에서 초기화가 끝났는데도 실패로 오인할 수 있어 thenable을 명시적으로 처리합니다.
+        let module = window.cv;
+        if (module && typeof module.then === 'function' && !module.Mat) {
+          module = await withTimeout(Promise.resolve(module), 60000, 'OpenCV Promise 초기화 시간 초과');
+          if (module) window.cv = module;
+        }
+        if (!window.cv?.Mat) {
+          const ok = await waitFor(() => !!window.cv?.Mat, 60000, 100);
+          if (!ok) throw new Error('OpenCV 런타임 초기화 시간 초과');
+        }
         state.cvReady = true; state.cvFailed = false;
-        els.opencvState.textContent = '자동 · 수동 문서 보정 사용 가능';
+        els.opencvState.textContent = '문서 보정 · OpenCV 가속 활성화';
         els.opencvState.className = 'engine-state ok';
         updateSecurityStatus();
         return true;
       } catch (err) {
         state.cvFailed = true;
-        els.opencvState.textContent = '문서 보정 엔진 준비 실패 · 원본 사용 가능';
-        els.opencvState.className = 'engine-state warn';
+        els.opencvState.textContent = '문서 보정 · 내장 호환 엔진 사용 가능';
+        els.opencvState.className = 'engine-state ok';
         throw err;
       } finally {
         if (!state.cvReady) state.cvPromise = null;
@@ -492,19 +591,36 @@
     return state.cvPromise;
   }
 
+  function withTimeout(promise, ms, message = '처리 시간이 초과되었습니다.') {
+    let timer;
+    return Promise.race([
+      Promise.resolve(promise),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  async function waitFor(predicate, timeoutMs = 30000, intervalMs = 100) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      try { if (predicate()) return true; } catch {}
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    return false;
+  }
+
   async function addImageFiles(files, { autoCorrect }) {
     if (state.busy) return;
     state.busy = true;
     try {
       await validateImageBatch(files, state.pages.length);
       showProgress('문서 가져오기', '이미지를 준비하고 있습니다.', 0);
-      const cvAvailable = autoCorrect ? (state.cvReady || await waitForCv(6500)) : false;
+      if (autoCorrect && !state.cvReady && !state.cvFailed) waitForCv(4000).catch(() => false);
       for (let i = 0; i < files.length; i++) {
         updateProgress((i / files.length) * 92, `${i + 1} / ${files.length} 페이지 처리`);
         const sourceBlob = await normalizeImageFile(files[i], IMPORT_MAX, 0.95);
         let pageBlob = sourceBlob;
         let corners = null;
-        if (autoCorrect && cvAvailable) {
+        if (autoCorrect) {
           try {
             corners = await detectDocumentCorners(sourceBlob);
             if (corners) pageBlob = await warpDocument(sourceBlob, corners);
@@ -517,7 +633,7 @@
       }
       renderPages();
       updateProgress(100, '페이지 추가 완료');
-      if (autoCorrect && !cvAvailable) showToast('보정 엔진을 사용할 수 없어 원본으로 추가했습니다.');
+      if (autoCorrect && !state.cvReady) showToast('내장 문서 보정 엔진으로 처리했습니다.');
     } catch (err) { handleError(err, '이미지를 불러오지 못했습니다.'); }
     finally { state.busy = false; hideProgress(); }
   }
@@ -629,7 +745,110 @@
   }
 
   async function detectDocumentCorners(blob) {
-    if (!state.cvReady || !window.cv) return null;
+    if (state.cvReady && window.cv?.Mat) {
+      try {
+        const found = await detectDocumentCornersOpenCv(blob);
+        if (found) return found;
+      } catch (err) { console.warn('OpenCV 자동 감지 실패 · 내장 감지로 전환', err); }
+    }
+    return detectDocumentCornersJs(blob);
+  }
+
+  async function detectDocumentCornersJs(blob) {
+    const img = await loadImage(blob);
+    const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
+    const scale = Math.min(1, 720 / Math.max(w0, h0));
+    const w = Math.max(80, Math.round(w0 * scale)), h = Math.max(80, Math.round(h0 * scale));
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d', { alpha:false, willReadFrequently:true });
+    ctx.drawImage(img, 0, 0, w, h); cleanupLoadedImage(img);
+    const data = ctx.getImageData(0,0,w,h).data;
+    const gray = new Uint8Array(w*h);
+    for (let i=0,p=0;i<data.length;i+=4,p++) gray[p] = (77*data[i] + 150*data[i+1] + 29*data[i+2]) >> 8;
+
+    const mag = new Uint8Array(w*h); let sum=0,sum2=0,count=0;
+    for (let y=1;y<h-1;y++) for (let x=1;x<w-1;x++) {
+      const i=y*w+x;
+      const gx = -gray[i-w-1]-2*gray[i-1]-gray[i+w-1] + gray[i-w+1]+2*gray[i+1]+gray[i+w+1];
+      const gy = -gray[i-w-1]-2*gray[i-w]-gray[i-w+1] + gray[i+w-1]+2*gray[i+w]+gray[i+w+1];
+      const m = Math.min(255, (Math.abs(gx)+Math.abs(gy))>>2); mag[i]=m; sum+=m; sum2+=m*m; count++;
+    }
+    const mean=sum/Math.max(1,count), variance=Math.max(0,sum2/Math.max(1,count)-mean*mean);
+    const threshold=clamp(mean + Math.sqrt(variance)*1.15, 42, 145);
+    let mask = new Uint8Array(w*h); const bx=Math.max(3,Math.round(w*.018)), by=Math.max(3,Math.round(h*.018));
+    for(let y=by;y<h-by;y++) for(let x=bx;x<w-bx;x++){const i=y*w+x;if(mag[i]>=threshold)mask[i]=1;}
+    // 끊긴 문서 외곽선을 연결하기 위한 가벼운 팽창
+    for(let pass=0;pass<2;pass++){
+      const next=mask.slice();
+      for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){const i=y*w+x;if(mask[i])continue;let hit=0;for(let yy=-1;yy<=1&&!hit;yy++)for(let xx=-1;xx<=1;xx++)if(mask[i+yy*w+xx]){hit=1;break;}if(hit)next[i]=1;}
+      mask=next;
+    }
+    const visited=new Uint8Array(w*h), queue=new Int32Array(w*h); let best=null,bestScore=0;
+    const dirs=[-1,1,-w,w,-w-1,-w+1,w-1,w+1];
+    for(let sy=by;sy<h-by;sy+=2) for(let sx=bx;sx<w-bx;sx+=2){
+      const start=sy*w+sx;if(!mask[start]||visited[start])continue;
+      let qh=0,qt=0;queue[qt++]=start;visited[start]=1;let n=0,minX=w,maxX=0,minY=h,maxY=0;
+      let tl=null,tr=null,br=null,bl=null,minSum=1e9,maxSum=-1e9,minDiff=1e9,maxDiff=-1e9;
+      while(qh<qt){const idx=queue[qh++],y=(idx/w)|0,x=idx-y*w;n++;minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);const su=x+y,di=x-y;if(su<minSum){minSum=su;tl={x,y}}if(su>maxSum){maxSum=su;br={x,y}}if(di>maxDiff){maxDiff=di;tr={x,y}}if(di<minDiff){minDiff=di;bl={x,y}}for(const d of dirs){const ni=idx+d;if(ni<0||ni>=mask.length||visited[ni]||!mask[ni])continue;const ny=(ni/w)|0,nx=ni-ny*w;if(Math.abs(nx-x)>1||Math.abs(ny-y)>1)continue;visited[ni]=1;queue[qt++]=ni;}}
+      const bw=maxX-minX+1,bh=maxY-minY+1,bboxArea=bw*bh;if(n<80||bboxArea<w*h*.10)continue;
+      const pts=orderQuad([tl,tr,br,bl]);const area=Math.abs(polygonArea(pts));if(area<w*h*.12)continue;
+      const score=area*(1+Math.min(2,n/Math.max(1,2*(bw+bh))));if(score>bestScore){bestScore=score;best=pts;}
+    }
+    releaseCanvas(canvas);
+    if(!best)return null;
+    const normalized=best.map(p=>({x:clamp(p.x/w,0,1),y:clamp(p.y/h,0,1)}));
+    return isReasonableQuad(normalized)?normalized:null;
+  }
+
+  function polygonArea(points){let a=0;for(let i=0;i<points.length;i++){const p=points[i],q=points[(i+1)%points.length];a+=p.x*q.y-q.x*p.y;}return a/2;}
+  function isReasonableQuad(points){if(!points||points.length!==4)return false;const a=Math.abs(polygonArea(points));if(a<.12)return false;const [tl,tr,br,bl]=orderQuad(points);return [distance(tl,tr),distance(tr,br),distance(br,bl),distance(bl,tl)].every(v=>v>.12);}
+
+  async function warpDocument(blob, normalizedCorners) {
+    if (state.cvReady && window.cv?.Mat) {
+      try { return await warpDocumentOpenCv(blob, normalizedCorners); }
+      catch (err) { console.warn('OpenCV 원근 보정 실패 · 내장 보정으로 전환', err); }
+    }
+    return warpDocumentJs(blob, normalizedCorners);
+  }
+
+  async function warpDocumentJs(blob, normalizedCorners) {
+    const img=await loadImage(blob);const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+    const pts=orderQuad(normalizedCorners.map(p=>({x:p.x*w,y:p.y*h})));const [tl,tr,br,bl]=pts;
+    let outW=Math.round(Math.max(distance(br,bl),distance(tr,tl))),outH=Math.round(Math.max(distance(tr,br),distance(tl,bl)));
+    if(outW<120||outH<120){cleanupLoadedImage(img);throw new Error('선택한 문서 영역이 너무 작습니다.');}
+    const fitted=fitDimensions(outW,outH,IMPORT_MAX);outW=fitted.width;outH=fitted.height;
+    const out=document.createElement('canvas');out.width=outW;out.height=outH;const ctx=out.getContext('2d',{alpha:false});ctx.fillStyle='#fff';ctx.fillRect(0,0,outW,outH);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+    const map=squareToQuadMapper(tl,tr,br,bl),mesh=(outW*outH>8_000_000?18:24);
+    for(let gy=0;gy<mesh;gy++)for(let gx=0;gx<mesh;gx++){
+      const u0=gx/mesh,u1=(gx+1)/mesh,v0=gy/mesh,v1=(gy+1)/mesh;
+      const s00=map(u0,v0),s10=map(u1,v0),s11=map(u1,v1),s01=map(u0,v1);
+      const d00={x:u0*outW,y:v0*outH},d10={x:u1*outW,y:v0*outH},d11={x:u1*outW,y:v1*outH},d01={x:u0*outW,y:v1*outH};
+      drawMappedTriangle(ctx,img,s00,s10,s11,d00,d10,d11);drawMappedTriangle(ctx,img,s00,s11,s01,d00,d11,d01);
+    }
+    cleanupLoadedImage(img);const result=await canvasToBlob(out,'image/jpeg',.96);releaseCanvas(out);return result;
+  }
+
+  function squareToQuadMapper(tl,tr,br,bl){
+    const x0=tl.x,y0=tl.y,x1=tr.x,y1=tr.y,x2=br.x,y2=br.y,x3=bl.x,y3=bl.y;
+    const dx1=x1-x2,dx2=x3-x2,dx3=x0-x1+x2-x3,dy1=y1-y2,dy2=y3-y2,dy3=y0-y1+y2-y3;
+    let g=0,h=0;if(Math.abs(dx3)>1e-7||Math.abs(dy3)>1e-7){const det=dx1*dy2-dx2*dy1;if(Math.abs(det)>1e-9){g=(dx3*dy2-dx2*dy3)/det;h=(dx1*dy3-dx3*dy1)/det;}}
+    const a=x1-x0+g*x1,b=x3-x0+h*x3,c=x0,d=y1-y0+g*y1,e=y3-y0+h*y3,f=y0;
+    return(u,v)=>{const z=g*u+h*v+1;return{x:(a*u+b*v+c)/z,y:(d*u+e*v+f)/z};};
+  }
+
+  function drawMappedTriangle(ctx,img,s0,s1,s2,d0,d1,d2){
+    const den=s0.x*(s1.y-s2.y)+s1.x*(s2.y-s0.y)+s2.x*(s0.y-s1.y);if(Math.abs(den)<1e-8)return;
+    const a=(d0.x*(s1.y-s2.y)+d1.x*(s2.y-s0.y)+d2.x*(s0.y-s1.y))/den;
+    const c=(d0.x*(s2.x-s1.x)+d1.x*(s0.x-s2.x)+d2.x*(s1.x-s0.x))/den;
+    const e=(d0.x*(s1.x*s2.y-s2.x*s1.y)+d1.x*(s2.x*s0.y-s0.x*s2.y)+d2.x*(s0.x*s1.y-s1.x*s0.y))/den;
+    const b=(d0.y*(s1.y-s2.y)+d1.y*(s2.y-s0.y)+d2.y*(s0.y-s1.y))/den;
+    const d=(d0.y*(s2.x-s1.x)+d1.y*(s0.x-s2.x)+d2.y*(s1.x-s0.x))/den;
+    const f=(d0.y*(s1.x*s2.y-s2.x*s1.y)+d1.y*(s2.x*s0.y-s0.x*s2.y)+d2.y*(s0.x*s1.y-s1.x*s0.y))/den;
+    ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.beginPath();ctx.moveTo(d0.x,d0.y);ctx.lineTo(d1.x,d1.y);ctx.lineTo(d2.x,d2.y);ctx.closePath();ctx.clip();ctx.setTransform(a,b,c,d,e,f);ctx.drawImage(img,0,0);ctx.restore();
+  }
+
+  async function detectDocumentCornersOpenCv(blob) {
+    if (!state.cvReady || !window.cv?.Mat) return null;
     const img = await loadImage(blob);
     const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
     const scale = Math.min(1, DETECT_MAX / Math.max(w0, h0));
@@ -661,8 +880,8 @@
     }
   }
 
-  async function warpDocument(blob, normalizedCorners) {
-    if (!state.cvReady || !window.cv) throw new Error('문서 보정 엔진이 준비되지 않았습니다.');
+  async function warpDocumentOpenCv(blob, normalizedCorners) {
+    if (!state.cvReady || !window.cv?.Mat) throw new Error('OpenCV 가속 엔진이 준비되지 않았습니다.');
     const img = await loadImage(blob); const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
     const source = document.createElement('canvas'); source.width=w; source.height=h; source.getContext('2d',{alpha:false}).drawImage(img,0,0); cleanupLoadedImage(img);
     const pts = orderQuad(normalizedCorners.map(p => ({x:p.x*w,y:p.y*h})));
@@ -708,7 +927,7 @@
   }
 
   async function openCropEditor(page) {
-    if (!(state.cvReady || await waitForCv(5000))) return showToast('문서 보정 엔진이 준비되지 않아 영역 조정을 사용할 수 없습니다.');
+    if (!state.cvReady && !state.cvFailed) waitForCv(2500).catch(() => false);
     const img=await loadImage(page.sourceBlob); const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height; const scale=Math.min(1,1000/Math.max(w,h));
     els.cropCanvas.width=Math.max(1,Math.round(w*scale));els.cropCanvas.height=Math.max(1,Math.round(h*scale));
     const ctx=els.cropCanvas.getContext('2d',{alpha:false});ctx.fillStyle='#111';ctx.fillRect(0,0,els.cropCanvas.width,els.cropCanvas.height);ctx.drawImage(img,0,0,els.cropCanvas.width,els.cropCanvas.height);cleanupLoadedImage(img);
@@ -994,7 +1213,7 @@
     if(!rt){els.securityBadge.textContent='제한';els.securityDetail.textContent='보안 런타임을 불러오지 못했습니다.';return;}
     const st=rt.status();
     if(!st.persistentPins){els.securityBadge.textContent='세션 잠금';els.securityDetail.textContent='브라우저 저장 제한으로 SHA-256 잠금이 현재 세션에만 유지됩니다.';}
-    else if(!st.pinCount){els.securityBadge.textContent='준비 전';els.securityDetail.textContent='문서 보정/OCR/PDF 엔진은 최초 사용 또는 보안 준비 시 SHA-256 지문을 생성해 잠급니다.';}
+    else if(!st.pinCount){els.securityBadge.textContent='준비 전';els.securityDetail.textContent='OCR/PDF 엔진은 최초 사용 또는 보안 준비 시 SHA-256 지문을 생성해 잠급니다. 문서 보정은 내장 엔진만으로도 사용할 수 있습니다.';}
     else{els.securityBadge.textContent='강화';els.securityDetail.textContent=`${st.pinCount}개 실행 자산을 버전 고정 + 최초 SHA-256 지문 잠금 후 앱 전용 캐시에서 사용합니다.`;}
   }
 
