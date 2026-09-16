@@ -1,8 +1,8 @@
-# ScanBox v1.1.4 Security Notes
+# ScanBox v1.1.5 Security Notes
 
 ## 문서 보정 엔진의 장애 격리
 
-v1.1.4는 OpenCV를 우선 문서 검출·원근 보정 엔진으로 사용하고, Service Worker가 페이지를 제어할 수 있게 되면 백그라운드에서 선행 초기화합니다. 자동 문서 보정 시에는 짧은 고정 대기시간 때문에 OpenCV를 조기에 포기하지 않고 실제 초기화 완료 또는 실패 판정까지 기다립니다.
+v1.1.5는 OpenCV가 정상 준비되면 이를 가속 엔진으로 사용하지만, iPhone PWA에서 OpenCV가 실패해도 문서 이미지를 외부로 전송하지 않는 **내장 edge-band 검출 + seamless WebGL 보정**으로 계속 동작합니다. 한 세션에서 OpenCV 실패 판정이 난 뒤에는 페이지마다 긴 초기화를 반복하지 않습니다.
 
 OpenCV가 실제로 실패한 경우에도 촬영 문서를 외부 서버로 보내지 않습니다. 원근 보정은 브라우저 내부의 seamless WebGL projective sampling으로 전환하며, WebGL도 사용할 수 없는 예외 환경에서는 삼각형 mesh가 아닌 CPU inverse mapping을 최종 fallback으로 사용합니다. 수동 4점 보정 역시 로컬에서 동작합니다.
 

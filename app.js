@@ -1,4 +1,4 @@
-/* ScanBox PWA v1.1.4 - Document Detection + Seamless Perspective
+/* ScanBox PWA v1.1.5 - Robust Edge-Band Detection + Seamless Perspective
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.4';
+  const APP_VERSION = '1.1.5';
   const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
   const THEME_KEY = 'scanbox.theme';
   const OCR_ENABLED_KEY = 'scanbox.ocr.enabled';
@@ -167,18 +167,19 @@
   function preloadOpenCv() {
     if (state.cvReady || state.cvPromise || state.busy) return;
     state.cvFailed = false;
-    ensureOpenCv(true).catch(err => console.warn('OpenCV 백그라운드 준비 실패 · 실제 보정 시 다시 시도합니다.', err));
+    // 세션 시작 시 한 번만 적극적으로 시도합니다. iOS에서 실패 판정이 난 뒤 매 페이지마다
+    // 60초 초기화를 반복하지 않고, 고정밀 JS 검출 + WebGL 보정으로 즉시 이어갑니다.
+    ensureOpenCv(true).catch(err => console.warn('OpenCV 백그라운드 준비 실패 · 호환 엔진을 사용합니다.', err));
   }
 
   async function prepareOpenCvForCorrection() {
     if (state.cvReady && window.cv?.Mat) return true;
+    if (state.cvFailed) return false;
     try {
-      // 고정된 4.5 ~ 5.5초 제한을 두지 않습니다. 캐시/다운로드/초기화가 실제로 완료되거나
-      // OpenCV 자체가 실패했다고 판정될 때까지 기다린 뒤에만 fallback을 선택합니다.
-      await ensureOpenCv(true);
+      await ensureOpenCv(false);
       return !!(state.cvReady && window.cv?.Mat);
     } catch (err) {
-      console.warn('OpenCV 준비 실패 · seamless WebGL 보정으로 전환:', err);
+      console.warn('OpenCV 준비 실패 · 고정밀 호환 검출/WebGL 보정으로 전환:', err);
       return false;
     }
   }
@@ -394,7 +395,7 @@
       els.offlinePrepBadge.classList.add('offline-ready');
       els.offlinePrepBtn.classList.add('is-ready');
       els.offlinePrepDetail.textContent = record.compatMode
-        ? '필수 엔진 검증 완료 · 문서 보정은 seamless 호환 엔진 사용'
+        ? '필수 엔진 검증 완료 · 문서 보정은 고정밀 호환 엔진 사용'
         : '필수 엔진 검증과 로컬 캐시 준비 완료';
     } else if (record?.failed) {
       els.offlinePrepBadge.textContent = '확인 필요 · 다시 준비';
@@ -464,9 +465,9 @@
         await ensureOpenCv();
       } catch (err) {
         compatMode = true;
-        console.warn('OpenCV 가속 준비 실패 · seamless 호환 엔진 사용:', err);
+        console.warn('OpenCV 가속 준비 실패 · 고정밀 호환 엔진 사용:', err);
         state.cvFailed = true;
-        els.opencvState.textContent = '문서 보정 · seamless 호환 엔진 사용 가능';
+        els.opencvState.textContent = '문서 보정 · 고정밀 호환 엔진 활성화';
         els.opencvState.className = 'engine-state ok';
       }
     }
@@ -495,7 +496,7 @@
     writeOfflinePrepRecord(record);
     updateOfflinePrepStatus(record);
     updateSecurityStatus(ready ? '강화' : '확인 필요', ready
-      ? (compatMode ? 'OCR·PDF 검증 완료 · 문서 보정은 seamless 호환 엔진 사용' : '실행 엔진 SHA-256 검증 및 앱 전용 캐시 준비 완료')
+      ? (compatMode ? 'OCR·PDF 검증 완료 · 문서 보정은 고정밀 호환 엔진 사용' : '실행 엔진 SHA-256 검증 및 앱 전용 캐시 준비 완료')
       : `${essentialFailures}개 필수 구성 요소 준비 실패 · 다시 준비해 주세요.`);
     setTimeout(hideProgress, 850);
     showToast(ready ? '보안 · 오프라인 준비가 완료되었습니다.' : `필수 구성 요소 ${essentialFailures}개를 다시 확인해 주세요.`);
@@ -633,7 +634,7 @@
         return true;
       } catch (err) {
         state.cvFailed = true;
-        els.opencvState.textContent = '문서 보정 · seamless 호환 엔진 사용 가능';
+        els.opencvState.textContent = '문서 보정 · 고정밀 호환 엔진 활성화';
         els.opencvState.className = 'engine-state ok';
         throw err;
       } finally {
@@ -670,6 +671,7 @@
         updateProgress(2, '문서 보정 엔진을 준비하고 있습니다.');
         await prepareOpenCvForCorrection();
       }
+      let detectionMisses = 0;
       for (let i = 0; i < files.length; i++) {
         updateProgress((i / files.length) * 92, `${i + 1} / ${files.length} 페이지 처리`);
         const sourceBlob = await normalizeImageFile(files[i], IMPORT_MAX, 0.95);
@@ -679,7 +681,8 @@
           try {
             corners = await detectDocumentCorners(sourceBlob);
             if (corners) pageBlob = await warpDocument(sourceBlob, corners);
-          } catch (err) { console.warn('자동 보정 실패:', err); }
+            else detectionMisses++;
+          } catch (err) { detectionMisses++; console.warn('자동 보정 실패:', err); }
         }
         const page = makePage(pageBlob, files[i].name, sourceBlob);
         page.cropCorners = corners;
@@ -688,7 +691,11 @@
       }
       renderPages();
       updateProgress(100, '페이지 추가 완료');
-      if (autoCorrect && !state.cvReady) showToast('OpenCV를 사용할 수 없어 seamless 호환 보정으로 처리했습니다.');
+      if (autoCorrect && detectionMisses > 0) {
+        const subject = detectionMisses === 1 ? '1장의 문서' : `${detectionMisses}장의 문서`;
+        showToast(`${subject} 경계를 확신하지 못해 원본으로 유지했습니다. 영역 조정에서 직접 맞출 수 있습니다.`);
+      }
+      if (autoCorrect && !state.cvReady) console.info('ScanBox: OpenCV 미사용 · 고정밀 호환 검출/WebGL 보정 사용');
     } catch (err) { handleError(err, '이미지를 불러오지 못했습니다.'); }
     finally { state.busy = false; hideProgress(); }
   }
@@ -813,7 +820,111 @@
     return insetQuad(found, 0.004);
   }
 
+  // v1.1.5: OpenCV가 없는 iPhone에서도 문서 내부 표선이 아니라 "종이 안/밖의 색 변화"를
+  // 직접 추적합니다. 각 스캔 라인에서 경계 후보를 찾고, 수백 개 후보를 robust line fit으로
+  // 묶어 네 변을 만든 뒤 교차점으로 4점을 계산합니다. 단일 극점 픽셀을 쓰지 않아 배경의
+  // 반사광/나뭇결 같은 이상치가 모서리를 문서 밖으로 끌고 가는 현상을 줄입니다.
   async function detectDocumentCornersJs(blob) {
+    let primary = null;
+    try { primary = await detectDocumentCornersEdgeBandJs(blob); }
+    catch (err) { console.warn('고정밀 경계 검출 실패 · 기존 호환 검출로 전환:', err); }
+    if (primary) return primary;
+    return detectDocumentCornersJsLegacy(blob);
+  }
+
+  async function detectDocumentCornersEdgeBandJs(blob) {
+    const img = await loadImage(blob);
+    const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
+    const scale = Math.min(1, 720 / Math.max(w0, h0));
+    const w = Math.max(100, Math.round(w0 * scale)), h = Math.max(100, Math.round(h0 * scale));
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d', { alpha:false, willReadFrequently:true });
+    ctx.drawImage(img, 0, 0, w, h); cleanupLoadedImage(img);
+    const rgba = ctx.getImageData(0,0,w,h).data;
+    releaseCanvas(canvas);
+    return detectEdgeBandQuadFromRgba(rgba,w,h);
+  }
+
+  function detectEdgeBandQuadFromRgba(rgba,w,h) {
+    if (!rgba || w < 100 || h < 100) return null;
+    const stride=w+1, n=(w+1)*(h+1), ir=new Float64Array(n), ig=new Float64Array(n), ib=new Float64Array(n);
+    for(let y=0;y<h;y++){
+      let rr=0,gg=0,bb=0;
+      for(let x=0;x<w;x++){
+        const p=(y*w+x)*4, k=(y+1)*stride+x+1;
+        rr+=rgba[p]; gg+=rgba[p+1]; bb+=rgba[p+2];
+        ir[k]=ir[k-stride]+rr; ig[k]=ig[k-stride]+gg; ib[k]=ib[k-stride]+bb;
+      }
+    }
+    const meanRect=(x0,y0,x1,y1)=>{
+      x0=clamp(Math.round(x0),0,w);x1=clamp(Math.round(x1),0,w);y0=clamp(Math.round(y0),0,h);y1=clamp(Math.round(y1),0,h);
+      if(x1<=x0||y1<=y0)return null;const a=y0*stride+x0,b=y0*stride+x1,c=y1*stride+x0,d=y1*stride+x1,den=(x1-x0)*(y1-y0);
+      return[(ir[d]-ir[b]-ir[c]+ir[a])/den,(ig[d]-ig[b]-ig[c]+ig[a])/den,(ib[d]-ib[b]-ib[c]+ib[a])/den];
+    };
+    const sat=c=>{const mx=Math.max(c[0],c[1],c[2]),mn=Math.min(c[0],c[1],c[2]);return mx>1?(mx-mn)*255/mx:0;};
+    const fd=(a,b)=>{if(!a||!b)return 1e9;const dr=a[0]-b[0],dg=a[1]-b[1],db=a[2]-b[2],ds=(sat(a)-sat(b))*.9;return Math.hypot(dr,dg,db,ds);};
+    const medianRgb=samples=>{
+      if(!samples.length)return[127,127,127];const rs=samples.map(v=>v[0]).sort((a,b)=>a-b),gs=samples.map(v=>v[1]).sort((a,b)=>a-b),bs=samples.map(v=>v[2]).sort((a,b)=>a-b),mid=(samples.length-1)/2;
+      const med=a=>{const lo=Math.floor(mid),hi=Math.ceil(mid);return(a[lo]+a[hi])/2;};return[med(rs),med(gs),med(bs)];
+    };
+    const step=Math.max(2,Math.round(Math.min(w,h)/180)), edgeBand=Math.max(3,Math.round(Math.min(w,h)*.03)), border=[], center=[];
+    const add=(arr,x,y)=>{const i=(y*w+x)*4;arr.push([rgba[i],rgba[i+1],rgba[i+2]]);};
+    for(let x=0;x<w;x+=step){for(let y=0;y<edgeBand;y+=step)add(border,x,y);for(let y=Math.max(0,h-edgeBand);y<h;y+=step)add(border,x,y);}
+    for(let y=edgeBand;y<h-edgeBand;y+=step){for(let x=0;x<edgeBand;x+=step)add(border,x,y);for(let x=Math.max(0,w-edgeBand);x<w;x+=step)add(border,x,y);}
+    for(let y=Math.round(h*.42);y<Math.round(h*.58);y+=step)for(let x=Math.round(w*.42);x<Math.round(w*.58);x+=step)add(center,x,y);
+    if(border.length<20||center.length<10)return null;
+    const bg=medianRgb(border), doc=medianRgb(center), cx=w/2, cy=h/2, r=clamp(Math.round(Math.min(w,h)*.011),4,8), yPad=Math.max(2,Math.round(h*.003)), xPad=Math.max(2,Math.round(w*.003));
+    // 중앙과 바깥 테두리의 색 모델이 사실상 같으면 이 검출법의 신뢰도가 낮습니다.
+    if(fd(bg,doc)<32)return null;
+    const pairScore=(inside,outside)=>{
+      const diff=fd(inside,outside),inMargin=fd(inside,bg)-fd(inside,doc),outMargin=fd(outside,doc)-fd(outside,bg);
+      return diff + .55*inMargin + .55*outMargin + (inMargin < -28 ? inMargin*.8 : 0) + (outMargin < -42 ? outMargin*.55 : 0);
+    };
+    const L=[],R=[],T=[],B=[];
+    for(let y=Math.round(h*.08);y<Math.round(h*.95);y+=3){
+      const c=meanRect(cx-20,y-yPad,cx+20,y+yPad+1); if(!c||fd(c,doc)>fd(c,bg)+18)continue;
+      let bestS=-1e9,bestX=null;
+      for(let x=Math.round(w*.025)+3*r;x<cx-w*.12;x+=2){const ins=meanRect(x+r,y-yPad,x+3*r,y+yPad+1),out=meanRect(x-3*r,y-yPad,x-r,y+yPad+1),sc=pairScore(ins,out);if(sc>bestS){bestS=sc;bestX=x;}}
+      if(bestX!=null&&bestS>24)L.push({u:y,v:bestX,s:bestS});
+      bestS=-1e9;bestX=null;
+      for(let x=Math.round(cx+w*.12);x<Math.round(w*.975)-3*r;x+=2){const ins=meanRect(x-3*r,y-yPad,x-r,y+yPad+1),out=meanRect(x+r,y-yPad,x+3*r,y+yPad+1),sc=pairScore(ins,out);if(sc>bestS){bestS=sc;bestX=x;}}
+      if(bestX!=null&&bestS>24)R.push({u:y,v:bestX,s:bestS});
+    }
+    for(let x=Math.round(w*.08);x<Math.round(w*.94);x+=3){
+      const c=meanRect(x-xPad,cy-20,x+xPad+1,cy+20); if(!c||fd(c,doc)>fd(c,bg)+18)continue;
+      let bestS=-1e9,bestY=null;
+      for(let y=Math.round(h*.025)+3*r;y<cy-h*.12;y+=2){const ins=meanRect(x-xPad,y+r,x+xPad+1,y+3*r),out=meanRect(x-xPad,y-3*r,x+xPad+1,y-r),sc=pairScore(ins,out);if(sc>bestS){bestS=sc;bestY=y;}}
+      if(bestY!=null&&bestS>24)T.push({u:x,v:bestY,s:bestS});
+      bestS=-1e9;bestY=null;
+      for(let y=Math.round(cy+h*.12);y<Math.round(h*.975)-3*r;y+=2){const ins=meanRect(x-xPad,y-3*r,x+xPad+1,y-r),out=meanRect(x-xPad,y+r,x+xPad+1,y+3*r),sc=pairScore(ins,out);if(sc>bestS){bestS=sc;bestY=y;}}
+      if(bestY!=null&&bestS>24)B.push({u:x,v:bestY,s:bestS});
+    }
+    const robustFit=(points,minU=-Infinity,maxU=Infinity)=>{
+      let p=points.filter(q=>q.u>=minU&&q.u<=maxU);if(p.length<12)return null;
+      let keep=p.map(()=>true),a=0,b=0,res=[];
+      for(let iter=0;iter<6;iter++){
+        let sw=0,sx=0,sy=0,sxx=0,sxy=0;
+        for(let i=0;i<p.length;i++)if(keep[i]){const wt=Math.sqrt(clamp(p[i].s,1,300));sw+=wt;sx+=wt*p[i].u;sy+=wt*p[i].v;sxx+=wt*p[i].u*p[i].u;sxy+=wt*p[i].u*p[i].v;}
+        const den=sw*sxx-sx*sx;if(sw<=0||Math.abs(den)<1e-8)return null;a=(sw*sxy-sx*sy)/den;b=(sy-a*sx)/sw;
+        res=p.map(q=>q.v-(a*q.u+b));const active=res.filter((_,i)=>keep[i]);const med=medianNumber(active),mad=medianNumber(active.map(v=>Math.abs(v-med)))+.5,thr=Math.max(2.5,2.8*1.4826*mad);const next=res.map(v=>Math.abs(v-med)<thr);
+        if(next.filter(Boolean).length<12)break;let same=true;for(let i=0;i<next.length;i++)if(next[i]!==keep[i]){same=false;break;}keep=next;if(same)break;
+      }
+      const activeAbs=res.filter((_,i)=>keep[i]).map(Math.abs);return{a,b,count:keep.filter(Boolean).length,residual:medianNumber(activeAbs)};
+    };
+    const lf=robustFit(L),rf=robustFit(R),tf=robustFit(T,w*.18,w*.90),bf=robustFit(B,w*.15,w*.90);
+    if(!lf||!rf||!tf||!bf)return null;
+    const minSideSamples=Math.max(24,Math.round(h*.08)),minHorizontalSamples=Math.max(18,Math.round(w*.05));
+    if(lf.count<minSideSamples||rf.count<minSideSamples||tf.count<minHorizontalSamples||bf.count<minHorizontalSamples)return null;
+    const residualLimit=Math.min(w,h)*.038;if(Math.max(lf.residual,rf.residual,tf.residual,bf.residual)>residualLimit)return null;
+    const intersect=(xLine,yLine)=>{const den=1-yLine.a*xLine.a;if(Math.abs(den)<1e-7)return null;const y=(yLine.a*xLine.b+yLine.b)/den;return{x:xLine.a*y+xLine.b,y};};
+    const px=[intersect(lf,tf),intersect(rf,tf),intersect(rf,bf),intersect(lf,bf)];if(px.some(q=>!q||q.x<-w*.04||q.x>w*1.04||q.y<-h*.04||q.y>h*1.04))return null;
+    const norm=orderQuad(px).map(q=>({x:clamp(q.x/w,0,1),y:clamp(q.y/h,0,1)}));
+    if(!isReasonableQuad(norm)||!isConvexQuad(norm))return null;
+    const contrast=scoreQuadBoundaryContrast(norm,rgba,w,h);if(contrast<.045)return null;
+    return norm;
+  }
+
+  async function detectDocumentCornersJsLegacy(blob) {
     const img = await loadImage(blob);
     const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
     const scale = Math.min(1, 720 / Math.max(w0, h0));
@@ -1237,7 +1348,7 @@
     releaseCanvas(canvas);
     const pts=orderQuad(normalizedCorners).map(p=>({x:p.x*w,y:p.y*h}));
     const sample=(x,y)=>{const ix=clamp(Math.round(x),0,w-1),iy=clamp(Math.round(y),0,h-1);return gray[iy*w+ix];};
-    const lines=[]; const search=Math.max(5,Math.round(Math.min(w,h)*.022));
+    const lines=[]; const search=Math.max(5,Math.round(Math.min(w,h)*.030));
     for(let i=0;i<4;i++){
       const a=pts[i],b=pts[(i+1)%4],dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,tx=dx/len,ty=dy/len,nx=-ty,ny=tx;
       let bestOff=0,bestScore=-1;
@@ -1347,7 +1458,13 @@
     mctx.strokeStyle='#3182f6';mctx.lineWidth=2;mctx.beginPath();mctx.moveTo(mag.width/2-13,mag.height/2);mctx.lineTo(mag.width/2+13,mag.height/2);mctx.moveTo(mag.width/2,mag.height/2-13);mctx.lineTo(mag.width/2,mag.height/2+13);mctx.stroke();
     mag.classList.remove('hidden');
     const stage=mag.parentElement,rect=stage?.getBoundingClientRect(),canvasRect=els.cropCanvas.getBoundingClientRect();
-    if(rect&&canvasRect){const px=(point.x/els.cropCanvas.width)*canvasRect.width+(canvasRect.left-rect.left);const py=(point.y/els.cropCanvas.height)*canvasRect.height+(canvasRect.top-rect.top);const left=clamp(px-mag.width/2,8,Math.max(8,rect.width-mag.width-8));const top=clamp(py-mag.height-34,8,Math.max(8,rect.height-mag.height-8));mag.style.left=`${left}px`;mag.style.top=`${top}px`;}
+    if(rect&&canvasRect){
+      const px=(point.x/els.cropCanvas.width)*canvasRect.width+(canvasRect.left-rect.left),py=(point.y/els.cropCanvas.height)*canvasRect.height+(canvasRect.top-rect.top),gap=28;
+      // 꼭짓점과 확대경이 겹치지 않도록 포인트의 반대 사분면에 배치합니다.
+      // 특히 좌상단은 확대경을 우하단에 띄워 손가락/포인트/확대경이 한곳에 겹치지 않습니다.
+      let left=px<rect.width/2?px+gap:px-mag.width-gap,top=py<rect.height/2?py+gap:py-mag.height-gap;
+      left=clamp(left,8,Math.max(8,rect.width-mag.width-8));top=clamp(top,8,Math.max(8,rect.height-mag.height-8));mag.style.left=`${left}px`;mag.style.top=`${top}px`;
+    }
   }
   function canvasPoint(e,canvas){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height};}
   function closeCropEditor(){if(state.cropEditor){state.cropEditor.base=null;if(state.cropEditor.baseCanvas)releaseCanvas(state.cropEditor.baseCanvas);state.cropEditor=null;}els.cropMagnifier?.classList.add('hidden');closeSheet(els.cropSheet);}

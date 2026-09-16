@@ -25,7 +25,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer} button:disable
 
 .secure-pill{background:#e8f7ee!important;color:#147a3d!important}
 
-/* v1.1.4 theme + settings */
+/* v1.1.5 theme + settings */
 .settings-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .settings-select{height:40px;min-width:104px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--text);padding:0 10px;font-weight:700;font-size:12px;outline:none}
 .offline-ready{background:#e8f7ee!important;color:#147a3d!important}.offline-warn{background:#fff4e5!important;color:#b45309!important}
@@ -85,7 +85,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer} button:disable
 .settings-row>.settings-actions{flex:0 0 auto;display:flex;align-items:center;gap:8px}
 @media(max-width:430px){.settings-row>.settings-actions{flex-direction:column;align-items:flex-end;gap:6px}}
 
-/* v1.1.4 accuracy / OCR / compact security UI */
+/* v1.1.5 accuracy / OCR / compact security UI */
 .toggle-divider{border-top:1px solid #f1f3f5}
 .toggle-line i{box-sizing:border-box;border:1px solid #b7c0ca}
 .toggle-line input:checked+i{background:var(--blue);border-color:var(--blue);box-shadow:0 0 0 1px rgba(49,130,246,.12)}
@@ -116,7 +116,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer} button:disable
 :root[data-theme="dark"] .security-inline-badge{background:#123629;color:#57d99b}
 @media(max-width:430px){.security-inline>span{white-space:normal}}
 
-/* v1.1.4 natural option switches */
+/* v1.1.5 natural option switches */
 .toggle-line{min-height:60px;gap:16px;padding:0 2px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .toggle-line>span{gap:4px}
 .toggle-line i{flex:0 0 44px;width:44px;height:26px;border:0!important;background:#d1d6db;box-shadow:inset 0 0 0 1px rgba(0,0,0,.045);transition:background-color .2s ease,box-shadow .2s ease,transform .2s ease}
