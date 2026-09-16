@@ -1,4 +1,4 @@
-# ScanBox v1.1.7 Security Notes
+# ScanBox v1.1.8 Security Notes
 
 ## 개인정보 처리
 

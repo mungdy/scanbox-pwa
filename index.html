@@ -38,7 +38,7 @@
 
   <main class="app-shell">
     <section class="intro">
-      <p class="kicker">ScanBox 1.1.7</p>
+      <p class="kicker">ScanBox 1.1.8</p>
       <h1>문서는 깔끔하게.<br />저장은 원하는 형식으로.</h1>
       <p>촬영부터 문서 보정, OCR, 검색 PDF와 PDF 편집까지 기기에서 처리합니다. 고정 버전 엔진은 최초 지문을 생성해 앱 캐시에 잠급니다.</p>
     </section>
@@ -86,16 +86,10 @@
         </div>
       </section>
 
-      <section class="pages-section">
+      <section id="scannerPagesSection" class="pages-section hidden">
         <div class="section-title-row">
           <div><h2>페이지</h2><p id="pageCount">0장</p></div>
           <button id="clearPagesBtn" class="ghost-danger" disabled>전체 삭제</button>
-        </div>
-
-        <div id="emptyPages" class="empty-state">
-          <div class="empty-symbol">▱</div>
-          <strong>스캔할 문서를 추가해 주세요.</strong>
-          <span>여러 장의 사진을 한 번에 불러올 수 있습니다.</span>
         </div>
         <div id="pageList" class="page-list"></div>
       </section>
@@ -155,11 +149,17 @@
     </section>
 
     <section id="editorTab" class="tab-panel">
-      <section class="soft-card pdf-editor-card">
+      <section class="editor-entry-row">
+        <button id="pdfEditorAddBtn" class="quick-action editor-add-action">
+          <span class="action-icon" aria-hidden="true">＋</span>
+          <span><strong>PDF 추가</strong><small>합치기·순서 변경·추출·나누기</small></span>
+        </button>
+        <input id="pdfEditorInput" type="file" accept="application/pdf" multiple hidden />
+      </section>
+
+      <section id="pdfEditorWorkspace" class="soft-card pdf-editor-card hidden">
         <div class="section-title-row no-margin">
-          <div><h2>PDF 편집</h2><p id="pdfEditorCount">PDF를 추가해 주세요.</p></div>
-          <button id="pdfEditorAddBtn" class="small-primary">PDF 추가</button>
-          <input id="pdfEditorInput" type="file" accept="application/pdf" multiple hidden />
+          <div><h2>PDF 편집</h2><p id="pdfEditorCount">0페이지</p></div>
         </div>
         <div class="editor-toolbar">
           <button id="pdfSelectAllBtn" class="secondary-mini" disabled>전체 선택</button>
@@ -168,15 +168,10 @@
           <button id="pdfDeleteBtn" class="secondary-mini danger-text" disabled>선택 삭제</button>
           <button id="pdfClearBtn" class="secondary-mini danger-text" disabled>전체 비우기</button>
         </div>
-        <div id="pdfEditorEmpty" class="empty-state compact-empty">
-          <div class="empty-symbol pdf-empty-symbol">PDF</div>
-          <strong>PDF를 추가해 주세요.</strong>
-          <span>여러 파일을 추가해 합치거나 페이지를 편집할 수 있습니다.</span>
-        </div>
         <div id="pdfEditorPages" class="pdf-editor-pages"></div>
       </section>
 
-      <section class="soft-card pdf-editor-actions">
+      <section id="pdfEditorActions" class="soft-card pdf-editor-actions hidden">
         <div class="field-group">
           <label for="pdfSplitRanges">나누기 범위</label>
           <input id="pdfSplitRanges" type="text" placeholder="예: 1-3, 4-6, 7" autocomplete="off" />
@@ -191,14 +186,14 @@
       <section class="tool-list pdf-extra-tools">
         <article class="tool-row">
           <div class="tool-badge">IMG</div>
-          <div class="tool-copy"><strong>PDF → 이미지</strong><span>각 페이지를 JPG 또는 PNG로 저장합니다.</span></div>
+          <div class="tool-copy"><strong>PDF → 이미지</strong><span>미리보기에서 페이지 방향을 확인·회전한 뒤 JPG 또는 PNG로 저장합니다.</span></div>
           <select id="pdfImageFormat" aria-label="PDF 이미지 형식"><option value="jpg">JPG</option><option value="png">PNG</option></select>
-          <button id="pdfToImageBtn" class="small-primary">선택</button>
+          <button id="pdfToImageBtn" class="small-primary">PDF 선택</button>
           <input id="pdfInput" type="file" accept="application/pdf" hidden />
         </article>
       </section>
 
-      <section class="info-card">
+      <section id="pdfEditorInfo" class="info-card hidden">
         <strong>원본 PDF 구조를 최대한 유지합니다.</strong>
         <p>합치기·순서 변경·삭제·추출·나누기는 페이지 자체를 복사하므로 검색 텍스트와 벡터 요소를 가능한 한 보존합니다. 암호화되었거나 특수한 PDF는 지원되지 않을 수 있습니다.</p>
       </section>
@@ -307,17 +302,44 @@
     </div>
   </section>
 
+  <section id="pdfImageSheet" class="sheet hidden" aria-modal="true" role="dialog">
+    <div class="sheet-backdrop" data-close-pdf-image></div>
+    <div class="sheet-panel pdf-image-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-heading">
+        <div><h3>PDF → 이미지 미리보기</h3><p id="pdfImageCounter">1 / 1 페이지</p></div>
+        <button class="round-button" data-close-pdf-image>×</button>
+      </div>
+      <div id="pdfImagePreviewStage" class="pdf-image-preview-stage">
+        <img id="pdfImagePreview" alt="PDF 페이지 이미지 미리보기" />
+      </div>
+      <div class="pdf-image-controls">
+        <button id="pdfImagePrev" class="secondary-button">이전</button>
+        <button id="pdfImageRotateLeft" class="secondary-button">↺ 90°</button>
+        <button id="pdfImageRotateRight" class="secondary-button">↻ 90°</button>
+        <button id="pdfImageNext" class="secondary-button">다음</button>
+      </div>
+      <div id="pdfImageThumbs" class="pdf-image-thumbs" aria-label="PDF 페이지 목록"></div>
+      <div class="pdf-image-export-row">
+        <label class="field-group"><span>저장 형식</span><select id="pdfImageSheetFormat"><option value="jpg">JPG</option><option value="png">PNG</option></select></label>
+        <button id="pdfImageExportBtn" class="primary-button">이미지로 저장</button>
+      </div>
+      <p class="preview-note">페이지마다 회전값을 따로 적용합니다. 원본 PDF는 변경하지 않습니다.</p>
+    </div>
+  </section>
+
   <section id="aboutSheet" class="sheet hidden">
     <div class="sheet-backdrop" data-close-about></div>
     <div class="sheet-panel tall-sheet">
       <div class="sheet-handle"></div>
-      <div class="sheet-heading"><div><h3>ScanBox 1.1.7</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
+      <div class="sheet-heading"><div><h3>ScanBox 1.1.8</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
       <div class="about-copy">
         <h4>1. 촬영</h4><p>자동 보정이 켜져 있으면 문서 테두리를 찾아 원근을 보정합니다. 결과가 마음에 들지 않으면 각 페이지의 ‘영역 조정’에서 네 모서리를 직접 옮길 수 있습니다.</p>
-        <h4>2. 정리</h4><p>스캔 페이지의 ≡ 손잡이를 끌거나 [번호] 페이지의 숫자를 바꿔 순서를 정리할 수 있습니다. 페이지 이미지를 누르면 편집된 모습을 크게 미리 볼 수 있습니다. PDF 편집 탭에서도 페이지를 재배열할 수 있습니다.</p>
+        <h4>2. 정리</h4><p>스캔 페이지의 ≡ 손잡이를 끌거나 [번호] 페이지의 숫자를 바꿔 순서를 정리할 수 있습니다. 페이지 이미지를 누르면 편집된 모습을 크게 미리 볼 수 있습니다. PDF 편집 탭에서도 ≡ 손잡이를 끌어 페이지 순서를 바꿀 수 있습니다.</p>
         <h4>3. OCR · 검색 PDF</h4><p>OCR은 기본 OFF이며 마지막 선택을 기억합니다. KOR / ENG / CHI를 독립 선택할 수 있고 OCR 텍스트를 교정해 검색 PDF에 반영할 수 있습니다.</p>
-        <h4>4. 저장</h4><p>파일을 만든 뒤 ‘공유 / 파일에 저장’을 누르면 iPhone이나 Android의 시스템 공유 메뉴를 통해 파일 앱, 클라우드, 메일 등으로 보낼 수 있습니다.</p>
-        <h4>5. 보안</h4><p>문서 데이터는 ScanBox 서버로 전송하지 않습니다. OCR·PDF 엔진은 버전을 고정하고 최초 SHA-256 지문을 잠근 뒤 앱 전용 캐시에서 실행합니다. 문서 보정은 OpenCV 가속이 실패해도 내장 호환 엔진으로 계속 사용할 수 있습니다.</p>
+        <h4>4. PDF → 이미지</h4><p>PDF를 선택하면 페이지를 미리보고 좌우 90° 회전한 뒤 JPG/PNG로 저장할 수 있습니다. 페이지별 회전은 이미지 출력에만 적용됩니다.</p>
+        <h4>5. 저장</h4><p>파일을 만든 뒤 ‘공유 / 파일에 저장’을 누르면 iPhone이나 Android의 시스템 공유 메뉴를 통해 파일 앱, 클라우드, 메일 등으로 보낼 수 있습니다.</p>
+        <h4>6. 보안</h4><p>문서 데이터는 ScanBox 서버로 전송하지 않습니다. OCR·PDF 엔진은 버전을 고정하고 최초 SHA-256 지문을 잠근 뒤 앱 전용 캐시에서 실행합니다. 문서 보정은 OpenCV 가속이 실패해도 내장 호환 엔진으로 계속 사용할 수 있습니다.</p>
       </div>
     </div>
   </section>
