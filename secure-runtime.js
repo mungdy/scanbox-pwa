@@ -1,7 +1,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.1.3';
+  const VERSION = '1.1.4';
   const RUNTIME_CACHE = `scanbox-runtime-v${VERSION}`;
   const PIN_PREFIX = `scanbox.vendor-pin.v${VERSION}.`;
   const MAX_ASSET_BYTES = 32 * 1024 * 1024;

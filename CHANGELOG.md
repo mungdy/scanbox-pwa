@@ -1,5 +1,22 @@
 # ScanBox Change Log
 
+## v1.1.4 — 2026-09-16
+
+### Document detection / perspective correction
+- Service Worker 제어가 준비되면 OpenCV를 백그라운드에서 선행 초기화
+- 자동 보정 시 4.5 ~ 5.5초 단기 timeout으로 OpenCV를 포기하던 경로 제거
+- 후보 사각형 점수에 문서 내부/외부 RGB 경계 대비 추가
+- 화면 가장자리 색 중앙값 기반 background-contrast mask를 OpenCV와 JS 검출 경로에 추가
+- v1.1.3의 Canvas 삼각형 mesh perspective fallback 완전 제거
+- OpenCV 실패 시 seamless WebGL inverse/projective sampling 사용
+- WebGL 불가 시 삼각형 분할이 없는 CPU inverse mapping을 최종 fallback으로 사용
+- 기존 edge refinement, 미세 inset, 수동 4점 확대경 유지
+
+### UI / storage
+- 자동 문서 보정/OCR 스위치의 ON 색은 유지하고 크기, thumb, 그림자, 터치 피드백을 자연스럽게 조정
+- 구버전 `scanbox.offline-ready.v*`, `scanbox.vendor-pin.v*` localStorage 기록 자동 정리
+- Service Worker의 구버전 `scanbox-*` Cache Storage 정리 정책 유지
+
 ## v1.1.3 — 2026-09-16
 
 ### Document detection / perspective correction

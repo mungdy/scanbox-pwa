@@ -1,4 +1,4 @@
-/* ScanBox PWA v1.1.3 - Security Hardened + iOS Compatibility
+/* ScanBox PWA v1.1.4 - Document Detection + Seamless Perspective
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.3';
+  const APP_VERSION = '1.1.4';
   const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
   const THEME_KEY = 'scanbox.theme';
   const OCR_ENABLED_KEY = 'scanbox.ocr.enabled';
@@ -86,6 +86,7 @@
 
   function init() {
     if (window.top !== window.self) { document.body.textContent = 'ScanBox는 보안을 위해 다른 사이트의 프레임 안에서 실행되지 않습니다.'; return; }
+    cleanupLegacySecurityMetadata();
     Object.assign(els, {
       networkBadge: $('#networkBadge'), aboutBtn: $('#aboutBtn'),
       cameraBtn: $('#cameraBtn'), galleryBtn: $('#galleryBtn'), pdfEditBtn: $('#pdfEditBtn'),
@@ -129,6 +130,10 @@
       navigator.serviceWorker.register('./sw.js').then(() => {
         navigator.serviceWorker.addEventListener('message', onServiceWorkerMessage);
         updateSecurityStatus();
+        // iPhone 첫 스캔에서 5초대 타임아웃으로 JS fallback이 먼저 실행되던 문제를 막기 위해
+        // Service Worker가 현재 페이지를 제어하는 즉시 OpenCV를 백그라운드에서 선행 초기화합니다.
+        if (navigator.serviceWorker.controller) setTimeout(preloadOpenCv, 80);
+        else navigator.serviceWorker.addEventListener('controllerchange', () => setTimeout(preloadOpenCv, 80), { once: true });
       }).catch(err => {
         console.warn('Service Worker 등록 실패:', err);
         updateSecurityStatus('제한', 'Service Worker를 사용할 수 없어 보안 엔진 캐시 기능이 제한됩니다.');
@@ -138,12 +143,45 @@
     }
 
     renderPages();
-    els.opencvState.textContent = '문서 보정 · 내장 호환 엔진 준비됨 · OpenCV 가속은 필요 시 로딩';
+    els.opencvState.textContent = '문서 보정 · OpenCV 가속 엔진 준비 대기';
     els.opencvState.className = 'engine-state';
     window.addEventListener('pagehide', cleanupRuntime);
     console.info(`ScanBox PWA v${APP_VERSION} Security Hardened + Compatibility Fallback`);
   }
 
+
+  function cleanupLegacySecurityMetadata() {
+    // 앱 캐시는 Service Worker가 구버전을 지웁니다. localStorage의 작은 버전별 보안 기록도
+    // 현재 버전만 남겨 장기간 업데이트 시 불필요한 메타데이터가 쌓이지 않게 합니다.
+    const keepOffline = OFFLINE_READY_KEY;
+    const keepPinPrefix = `scanbox.vendor-pin.v${APP_VERSION}.`;
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i) || '';
+        if (key.startsWith('scanbox.offline-ready.v') && key !== keepOffline) localStorage.removeItem(key);
+        else if (key.startsWith('scanbox.vendor-pin.v') && !key.startsWith(keepPinPrefix)) localStorage.removeItem(key);
+      }
+    } catch (err) { console.warn('구버전 보안 메타데이터 정리 생략:', err); }
+  }
+
+  function preloadOpenCv() {
+    if (state.cvReady || state.cvPromise || state.busy) return;
+    state.cvFailed = false;
+    ensureOpenCv(true).catch(err => console.warn('OpenCV 백그라운드 준비 실패 · 실제 보정 시 다시 시도합니다.', err));
+  }
+
+  async function prepareOpenCvForCorrection() {
+    if (state.cvReady && window.cv?.Mat) return true;
+    try {
+      // 고정된 4.5 ~ 5.5초 제한을 두지 않습니다. 캐시/다운로드/초기화가 실제로 완료되거나
+      // OpenCV 자체가 실패했다고 판정될 때까지 기다린 뒤에만 fallback을 선택합니다.
+      await ensureOpenCv(true);
+      return !!(state.cvReady && window.cv?.Mat);
+    } catch (err) {
+      console.warn('OpenCV 준비 실패 · seamless WebGL 보정으로 전환:', err);
+      return false;
+    }
+  }
 
   function cleanupRuntime() {
     cleanupPages(state.pages);
@@ -197,7 +235,7 @@
           page.rotation = (page.rotation + 90) % 360; invalidateOcr(page); await refreshPreview(page);
         } else if (btn.dataset.action === 'filter') {
           page.filter = btn.dataset.filter;
-          if ((page.filter === 'document' || page.filter === 'bw') && !state.cvReady && !state.cvFailed) waitForCv(2000).catch(() => false);
+          if ((page.filter === 'document' || page.filter === 'bw') && !state.cvReady) prepareOpenCvForCorrection().catch(() => false);
           invalidateOcr(page); await refreshPreview(page);
         } else if (btn.dataset.action === 'crop') {
           await openCropEditor(page); return;
@@ -356,7 +394,7 @@
       els.offlinePrepBadge.classList.add('offline-ready');
       els.offlinePrepBtn.classList.add('is-ready');
       els.offlinePrepDetail.textContent = record.compatMode
-        ? '필수 엔진 검증 완료 · 문서 보정은 내장 호환 엔진 사용'
+        ? '필수 엔진 검증 완료 · 문서 보정은 seamless 호환 엔진 사용'
         : '필수 엔진 검증과 로컬 캐시 준비 완료';
     } else if (record?.failed) {
       els.offlinePrepBadge.textContent = '확인 필요 · 다시 준비';
@@ -426,9 +464,9 @@
         await ensureOpenCv();
       } catch (err) {
         compatMode = true;
-        console.warn('OpenCV 가속 준비 실패 · 내장 호환 엔진 사용:', err);
+        console.warn('OpenCV 가속 준비 실패 · seamless 호환 엔진 사용:', err);
         state.cvFailed = true;
-        els.opencvState.textContent = '문서 보정 · 내장 호환 엔진 사용 가능';
+        els.opencvState.textContent = '문서 보정 · seamless 호환 엔진 사용 가능';
         els.opencvState.className = 'engine-state ok';
       }
     }
@@ -457,7 +495,7 @@
     writeOfflinePrepRecord(record);
     updateOfflinePrepStatus(record);
     updateSecurityStatus(ready ? '강화' : '확인 필요', ready
-      ? (compatMode ? 'OCR·PDF 검증 완료 · 문서 보정은 내장 호환 엔진 사용' : '실행 엔진 SHA-256 검증 및 앱 전용 캐시 준비 완료')
+      ? (compatMode ? 'OCR·PDF 검증 완료 · 문서 보정은 seamless 호환 엔진 사용' : '실행 엔진 SHA-256 검증 및 앱 전용 캐시 준비 완료')
       : `${essentialFailures}개 필수 구성 요소 준비 실패 · 다시 준비해 주세요.`);
     setTimeout(hideProgress, 850);
     showToast(ready ? '보안 · 오프라인 준비가 완료되었습니다.' : `필수 구성 요소 ${essentialFailures}개를 다시 확인해 주세요.`);
@@ -566,8 +604,9 @@
     if (sig !== '%PDF-') throw new Error('PDF 파일 서명이 올바르지 않습니다.');
   }
 
-  async function ensureOpenCv() {
+  async function ensureOpenCv(forceRetry = false) {
     if (state.cvReady && window.cv?.Mat) return true;
+    if (forceRetry && state.cvFailed && !state.cvPromise) state.cvFailed = false;
     if (state.cvPromise) return state.cvPromise;
     state.cvPromise = (async () => {
       try {
@@ -594,7 +633,7 @@
         return true;
       } catch (err) {
         state.cvFailed = true;
-        els.opencvState.textContent = '문서 보정 · 내장 호환 엔진 사용 가능';
+        els.opencvState.textContent = '문서 보정 · seamless 호환 엔진 사용 가능';
         els.opencvState.className = 'engine-state ok';
         throw err;
       } finally {
@@ -627,7 +666,10 @@
     try {
       await validateImageBatch(files, state.pages.length);
       showProgress('문서 가져오기', '이미지를 준비하고 있습니다.', 0);
-      if (autoCorrect && !state.cvReady && !state.cvFailed) await waitForCv(5500);
+      if (autoCorrect && !state.cvReady) {
+        updateProgress(2, '문서 보정 엔진을 준비하고 있습니다.');
+        await prepareOpenCvForCorrection();
+      }
       for (let i = 0; i < files.length; i++) {
         updateProgress((i / files.length) * 92, `${i + 1} / ${files.length} 페이지 처리`);
         const sourceBlob = await normalizeImageFile(files[i], IMPORT_MAX, 0.95);
@@ -646,7 +688,7 @@
       }
       renderPages();
       updateProgress(100, '페이지 추가 완료');
-      if (autoCorrect && !state.cvReady) showToast('내장 문서 보정 엔진으로 처리했습니다.');
+      if (autoCorrect && !state.cvReady) showToast('OpenCV를 사용할 수 없어 seamless 호환 보정으로 처리했습니다.');
     } catch (err) { handleError(err, '이미지를 불러오지 못했습니다.'); }
     finally { state.busy = false; hideProgress(); }
   }
@@ -757,8 +799,8 @@
   }
 
   async function detectDocumentCorners(blob) {
-    // 첫 촬영에서도 가속 엔진 초기화를 실제로 기다린 뒤 검출합니다.
-    if (!state.cvReady && !state.cvFailed && !state.cvPromise) await waitForCv(4500);
+    // 직접 영역 재감지로 들어온 경우에도 OpenCV가 준비 중이라면 완료까지 기다립니다.
+    if (!state.cvReady) await prepareOpenCvForCorrection();
     let found = null;
     if (state.cvReady && window.cv?.Mat) {
       try { found = await detectDocumentCornersOpenCv(blob); }
@@ -780,6 +822,7 @@
     const ctx = canvas.getContext('2d', { alpha:false, willReadFrequently:true });
     ctx.drawImage(img, 0, 0, w, h); cleanupLoadedImage(img);
     const data = ctx.getImageData(0,0,w,h).data;
+    const colorCandidate = detectBackgroundRegionQuadJs(data, w, h);
     const gray = new Uint8Array(w*h);
     for (let i=0,p=0;i<data.length;i+=4,p++) gray[p] = (77*data[i] + 150*data[i+1] + 29*data[i+2]) >> 8;
 
@@ -812,9 +855,32 @@
       const score=area*(1+Math.min(2,n/Math.max(1,2*(bw+bh))));if(score>bestScore){bestScore=score;best=pts;}
     }
     releaseCanvas(canvas);
-    if(!best)return null;
-    const normalized=best.map(p=>({x:clamp(p.x/w,0,1),y:clamp(p.y/h,0,1)}));
-    return isReasonableQuad(normalized)?normalized:null;
+    let normalized=best?best.map(p=>({x:clamp(p.x/w,0,1),y:clamp(p.y/h,0,1)})):null;
+    if(normalized&&!isReasonableQuad(normalized)) normalized=null;
+    if(colorCandidate&&isReasonableQuad(colorCandidate)){
+      const colorScore=scoreDocumentQuad(colorCandidate,data,w,h),edgeScore=normalized?scoreDocumentQuad(normalized,data,w,h):-Infinity;
+      if(colorScore>edgeScore) normalized=colorCandidate;
+    }
+    return normalized;
+  }
+
+  function detectBackgroundRegionQuadJs(rgba,w,h){
+    try{
+      const step=Math.max(2,Math.round(Math.min(w,h)/180)),band=Math.max(3,Math.round(Math.min(w,h)*.025)),rs=[],gs=[],bs=[];
+      const add=(x,y)=>{const i=(y*w+x)*4;rs.push(rgba[i]);gs.push(rgba[i+1]);bs.push(rgba[i+2]);};
+      for(let x=0;x<w;x+=step){for(let y=0;y<band;y+=step)add(x,y);for(let y=Math.max(0,h-band);y<h;y+=step)add(x,y);}
+      for(let y=band;y<h-band;y+=step){for(let x=0;x<band;x+=step)add(x,y);for(let x=Math.max(0,w-band);x<w;x+=step)add(x,y);}
+      if(rs.length<20)return null;const br=medianNumber(rs),bg=medianNumber(gs),bb=medianNumber(bs),bd=[];
+      for(let i=0;i<rs.length;i++)bd.push(Math.abs(rs[i]-br)+Math.abs(gs[i]-bg)+Math.abs(bs[i]-bb));
+      const med=medianNumber(bd),mad=medianNumber(bd.map(v=>Math.abs(v-med))),thr=clamp(med+Math.max(24,mad*3.4),30,155),mask=new Uint8Array(w*h);
+      for(let p=0,i=0;p<mask.length;p++,i+=4){const d=Math.abs(rgba[i]-br)+Math.abs(rgba[i+1]-bg)+Math.abs(rgba[i+2]-bb);if(d>=thr)mask[p]=1;}
+      const visited=new Uint8Array(mask.length),queue=new Int32Array(mask.length),dirs=[-1,1,-w,w,-w-1,-w+1,w-1,w+1];let best=null,bestArea=0;
+      for(let sy=1;sy<h-1;sy+=2)for(let sx=1;sx<w-1;sx+=2){const st=sy*w+sx;if(!mask[st]||visited[st])continue;let qh=0,qt=0,n=0;queue[qt++]=st;visited[st]=1;let tl=null,tr=null,brp=null,bl=null,minSum=1e9,maxSum=-1e9,minDiff=1e9,maxDiff=-1e9;
+        while(qh<qt){const idx=queue[qh++],y=(idx/w)|0,x=idx-y*w;n++;const su=x+y,di=x-y;if(su<minSum){minSum=su;tl={x,y}}if(su>maxSum){maxSum=su;brp={x,y}}if(di>maxDiff){maxDiff=di;tr={x,y}}if(di<minDiff){minDiff=di;bl={x,y}}for(const d of dirs){const ni=idx+d;if(ni<0||ni>=mask.length||visited[ni]||!mask[ni])continue;const ny=(ni/w)|0,nx=ni-ny*w;if(Math.abs(nx-x)>1||Math.abs(ny-y)>1)continue;visited[ni]=1;queue[qt++]=ni;}}
+        if(n>bestArea&&n>w*h*.12){bestArea=n;best=[tl,tr,brp,bl];}
+      }
+      if(!best)return null;return orderQuad(best).map(q=>({x:clamp(q.x/w,0,1),y:clamp(q.y/h,0,1)}));
+    }catch(err){console.warn('내장 배경 대비 감지 실패:',err);return null;}
   }
 
   function polygonArea(points){let a=0;for(let i=0;i<points.length;i++){const p=points[i],q=points[(i+1)%points.length];a+=p.x*q.y-q.x*p.y;}return a/2;}
@@ -823,45 +889,104 @@
   async function warpDocument(blob, normalizedCorners) {
     if (state.cvReady && window.cv?.Mat) {
       try { return await warpDocumentOpenCv(blob, normalizedCorners); }
-      catch (err) { console.warn('OpenCV 원근 보정 실패 · 내장 보정으로 전환', err); }
+      catch (err) { console.warn('OpenCV 원근 보정 실패 · seamless WebGL 보정으로 전환', err); }
     }
-    return warpDocumentJs(blob, normalizedCorners);
+    try { return await warpDocumentWebGl(blob, normalizedCorners); }
+    catch (err) {
+      console.warn('WebGL 원근 보정 실패 · CPU 호환 보정으로 전환', err);
+      return warpDocumentCpu(blob, normalizedCorners);
+    }
   }
 
-  async function warpDocumentJs(blob, normalizedCorners) {
-    const img=await loadImage(blob);const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
-    const pts=orderQuad(normalizedCorners.map(p=>({x:p.x*w,y:p.y*h})));const [tl,tr,br,bl]=pts;
-    let outW=Math.round(Math.max(distance(br,bl),distance(tr,tl))),outH=Math.round(Math.max(distance(tr,br),distance(tl,bl)));
-    if(outW<120||outH<120){cleanupLoadedImage(img);throw new Error('선택한 문서 영역이 너무 작습니다.');}
-    const fitted=fitDimensions(outW,outH,IMPORT_MAX);outW=fitted.width;outH=fitted.height;
-    const out=document.createElement('canvas');out.width=outW;out.height=outH;const ctx=out.getContext('2d',{alpha:false});ctx.fillStyle='#fff';ctx.fillRect(0,0,outW,outH);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
-    const map=squareToQuadMapper(tl,tr,br,bl),mesh=(outW*outH>8_000_000?36:56);
-    for(let gy=0;gy<mesh;gy++)for(let gx=0;gx<mesh;gx++){
-      const u0=gx/mesh,u1=(gx+1)/mesh,v0=gy/mesh,v1=(gy+1)/mesh;
-      const s00=map(u0,v0),s10=map(u1,v0),s11=map(u1,v1),s01=map(u0,v1);
-      const d00={x:u0*outW,y:v0*outH},d10={x:u1*outW,y:v0*outH},d11={x:u1*outW,y:v1*outH},d01={x:u0*outW,y:v1*outH};
-      drawMappedTriangle(ctx,img,s00,s10,s11,d00,d10,d11);drawMappedTriangle(ctx,img,s00,s11,s01,d00,d11,d01);
-    }
-    cleanupLoadedImage(img);const result=await canvasToBlob(out,'image/jpeg',.96);releaseCanvas(out);return result;
-  }
-
-  function squareToQuadMapper(tl,tr,br,bl){
+  function squareToQuadCoefficients(tl,tr,br,bl) {
     const x0=tl.x,y0=tl.y,x1=tr.x,y1=tr.y,x2=br.x,y2=br.y,x3=bl.x,y3=bl.y;
     const dx1=x1-x2,dx2=x3-x2,dx3=x0-x1+x2-x3,dy1=y1-y2,dy2=y3-y2,dy3=y0-y1+y2-y3;
-    let g=0,h=0;if(Math.abs(dx3)>1e-7||Math.abs(dy3)>1e-7){const det=dx1*dy2-dx2*dy1;if(Math.abs(det)>1e-9){g=(dx3*dy2-dx2*dy3)/det;h=(dx1*dy3-dx3*dy1)/det;}}
-    const a=x1-x0+g*x1,b=x3-x0+h*x3,c=x0,d=y1-y0+g*y1,e=y3-y0+h*y3,f=y0;
-    return(u,v)=>{const z=g*u+h*v+1;return{x:(a*u+b*v+c)/z,y:(d*u+e*v+f)/z};};
+    let g=0,h=0;
+    if(Math.abs(dx3)>1e-9||Math.abs(dy3)>1e-9){
+      const det=dx1*dy2-dx2*dy1;
+      if(Math.abs(det)>1e-12){g=(dx3*dy2-dx2*dy3)/det;h=(dx1*dy3-dx3*dy1)/det;}
+    }
+    return {a:x1-x0+g*x1,b:x3-x0+h*x3,c:x0,d:y1-y0+g*y1,e:y3-y0+h*y3,f:y0,g,h};
   }
 
-  function drawMappedTriangle(ctx,img,s0,s1,s2,d0,d1,d2){
-    const den=s0.x*(s1.y-s2.y)+s1.x*(s2.y-s0.y)+s2.x*(s0.y-s1.y);if(Math.abs(den)<1e-8)return;
-    const a=(d0.x*(s1.y-s2.y)+d1.x*(s2.y-s0.y)+d2.x*(s0.y-s1.y))/den;
-    const c=(d0.x*(s2.x-s1.x)+d1.x*(s0.x-s2.x)+d2.x*(s1.x-s0.x))/den;
-    const e=(d0.x*(s1.x*s2.y-s2.x*s1.y)+d1.x*(s2.x*s0.y-s0.x*s2.y)+d2.x*(s0.x*s1.y-s1.x*s0.y))/den;
-    const b=(d0.y*(s1.y-s2.y)+d1.y*(s2.y-s0.y)+d2.y*(s0.y-s1.y))/den;
-    const d=(d0.y*(s2.x-s1.x)+d1.y*(s0.x-s2.x)+d2.y*(s1.x-s0.x))/den;
-    const f=(d0.y*(s1.x*s2.y-s2.x*s1.y)+d1.y*(s2.x*s0.y-s0.x*s2.y)+d2.y*(s0.x*s1.y-s1.x*s0.y))/den;
-    ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.beginPath();ctx.moveTo(d0.x,d0.y);ctx.lineTo(d1.x,d1.y);ctx.lineTo(d2.x,d2.y);ctx.closePath();ctx.clip();ctx.setTransform(a,b,c,d,e,f);ctx.drawImage(img,0,0);ctx.restore();
+  async function warpDocumentWebGl(blob, normalizedCorners) {
+    const img=await loadImage(blob);
+    const sourceW=img.naturalWidth||img.width, sourceH=img.naturalHeight||img.height;
+    const pts=orderQuad(normalizedCorners); const [tl,tr,br,bl]=pts;
+    let outW=Math.round(Math.max(distance({x:br.x*sourceW,y:br.y*sourceH},{x:bl.x*sourceW,y:bl.y*sourceH}),distance({x:tr.x*sourceW,y:tr.y*sourceH},{x:tl.x*sourceW,y:tl.y*sourceH})));
+    let outH=Math.round(Math.max(distance({x:tr.x*sourceW,y:tr.y*sourceH},{x:br.x*sourceW,y:br.y*sourceH}),distance({x:tl.x*sourceW,y:tl.y*sourceH},{x:bl.x*sourceW,y:bl.y*sourceH})));
+    if(outW<120||outH<120){cleanupLoadedImage(img);throw new Error('선택한 문서 영역이 너무 작습니다.');}
+
+    const out=document.createElement('canvas'); out.width=1; out.height=1;
+    const gl=out.getContext('webgl',{alpha:false,antialias:false,preserveDrawingBuffer:true,premultipliedAlpha:false}) || out.getContext('experimental-webgl',{alpha:false,antialias:false,preserveDrawingBuffer:true,premultipliedAlpha:false});
+    if(!gl){cleanupLoadedImage(img);releaseCanvas(out);throw new Error('이 환경에서는 WebGL 원근 보정을 사용할 수 없습니다.');}
+    const maxTexture=Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)||4096);
+    const vp=gl.getParameter(gl.MAX_VIEWPORT_DIMS); const maxViewport=Math.min(Number(vp?.[0]||maxTexture),Number(vp?.[1]||maxTexture));
+    const maxOut=Math.max(1024,Math.min(IMPORT_MAX,maxTexture,maxViewport));
+    const fitted=fitDimensions(outW,outH,maxOut); outW=fitted.width;outH=fitted.height; out.width=outW;out.height=outH;
+
+    let texSource=img, texCanvas=null;
+    if(sourceW>maxTexture||sourceH>maxTexture){
+      const sf=fitDimensions(sourceW,sourceH,maxTexture);
+      texCanvas=document.createElement('canvas');texCanvas.width=sf.width;texCanvas.height=sf.height;
+      const tctx=texCanvas.getContext('2d',{alpha:false});tctx.fillStyle='#fff';tctx.fillRect(0,0,texCanvas.width,texCanvas.height);tctx.drawImage(img,0,0,texCanvas.width,texCanvas.height);texSource=texCanvas;
+    }
+
+    const compile=(type,source)=>{const sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){const msg=gl.getShaderInfoLog(sh)||'shader compile error';gl.deleteShader(sh);throw new Error(msg);}return sh;};
+    let program=null,vs=null,fs=null,buffer=null,texture=null;
+    try{
+      vs=compile(gl.VERTEX_SHADER,`attribute vec2 a_pos;attribute vec2 a_dest;varying vec2 v_dest;void main(){gl_Position=vec4(a_pos,0.0,1.0);v_dest=a_dest;}`);
+      fs=compile(gl.FRAGMENT_SHADER,`precision highp float;varying vec2 v_dest;uniform sampler2D u_image;uniform mat3 u_h;void main(){vec3 q=u_h*vec3(v_dest,1.0);if(abs(q.z)<0.000001){gl_FragColor=vec4(1.0);return;}vec2 s=q.xy/q.z;if(s.x<0.0||s.x>1.0||s.y<0.0||s.y>1.0){gl_FragColor=vec4(1.0);return;}gl_FragColor=texture2D(u_image,vec2(s.x,1.0-s.y));}`);
+      program=gl.createProgram();gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);
+      if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'WebGL program link error');
+      gl.useProgram(program);gl.viewport(0,0,outW,outH);gl.clearColor(1,1,1,1);gl.clear(gl.COLOR_BUFFER_BIT);
+
+      const vertices=new Float32Array([
+        -1,-1, 0,1,   1,-1, 1,1,  -1,1, 0,0,
+        -1,1, 0,0,    1,-1, 1,1,   1,1, 1,0
+      ]);
+      buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,vertices,gl.STATIC_DRAW);
+      const stride=4*4, posLoc=gl.getAttribLocation(program,'a_pos'), destLoc=gl.getAttribLocation(program,'a_dest');
+      gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,stride,0);
+      gl.enableVertexAttribArray(destLoc);gl.vertexAttribPointer(destLoc,2,gl.FLOAT,false,stride,8);
+
+      texture=gl.createTexture();gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,texSource);
+      gl.uniform1i(gl.getUniformLocation(program,'u_image'),0);
+
+      const H=squareToQuadCoefficients(tl,tr,br,bl);
+      // GLSL mat3는 column-major입니다: [a d g | b e h | c f 1]
+      gl.uniformMatrix3fv(gl.getUniformLocation(program,'u_h'),false,new Float32Array([H.a,H.d,H.g,H.b,H.e,H.h,H.c,H.f,1]));
+      gl.drawArrays(gl.TRIANGLES,0,6);gl.finish();
+      const result=await canvasToBlob(out,'image/jpeg',.96);
+      return result;
+    } finally {
+      try{if(texture)gl.deleteTexture(texture);}catch{}try{if(buffer)gl.deleteBuffer(buffer);}catch{}try{if(program)gl.deleteProgram(program);}catch{}try{if(vs)gl.deleteShader(vs);}catch{}try{if(fs)gl.deleteShader(fs);}catch{}
+      if(texCanvas)releaseCanvas(texCanvas);cleanupLoadedImage(img);releaseCanvas(out);
+    }
+  }
+
+  async function warpDocumentCpu(blob, normalizedCorners) {
+    const img=await loadImage(blob);const w0=img.naturalWidth||img.width,h0=img.naturalHeight||img.height;
+    const srcFit=fitDimensions(w0,h0,3000),src=document.createElement('canvas');src.width=srcFit.width;src.height=srcFit.height;
+    const sctx=src.getContext('2d',{alpha:false,willReadFrequently:true});sctx.fillStyle='#fff';sctx.fillRect(0,0,src.width,src.height);sctx.drawImage(img,0,0,src.width,src.height);cleanupLoadedImage(img);
+    const pts=orderQuad(normalizedCorners),[tl,tr,br,bl]=pts;
+    let outW=Math.round(Math.max(distance({x:br.x*w0,y:br.y*h0},{x:bl.x*w0,y:bl.y*h0}),distance({x:tr.x*w0,y:tr.y*h0},{x:tl.x*w0,y:tl.y*h0}))),outH=Math.round(Math.max(distance({x:tr.x*w0,y:tr.y*h0},{x:br.x*w0,y:br.y*h0}),distance({x:tl.x*w0,y:tl.y*h0},{x:bl.x*w0,y:bl.y*h0})));
+    const fit=fitDimensions(outW,outH,2600);outW=fit.width;outH=fit.height;if(outW<120||outH<120){releaseCanvas(src);throw new Error('선택한 문서 영역이 너무 작습니다.');}
+    const out=document.createElement('canvas');out.width=outW;out.height=outH;const octx=out.getContext('2d',{alpha:false});
+    const source=sctx.getImageData(0,0,src.width,src.height),dst=octx.createImageData(outW,outH),H=squareToQuadCoefficients(tl,tr,br,bl),sd=source.data,dd=dst.data;
+    for(let y=0;y<outH;y++){
+      const v=(y+.5)/outH;
+      for(let x=0;x<outW;x++){
+        const u=(x+.5)/outW,z=H.g*u+H.h*v+1,sx=((H.a*u+H.b*v+H.c)/z)*src.width,sy=((H.d*u+H.e*v+H.f)/z)*src.height;
+        const ix=clamp(Math.round(sx),0,src.width-1),iy=clamp(Math.round(sy),0,src.height-1),si=(iy*src.width+ix)*4,di=(y*outW+x)*4;
+        dd[di]=sd[si];dd[di+1]=sd[si+1];dd[di+2]=sd[si+2];dd[di+3]=255;
+      }
+    }
+    octx.putImageData(dst,0,0);releaseCanvas(src);const result=await canvasToBlob(out,'image/jpeg',.95);releaseCanvas(out);return result;
   }
 
   async function detectDocumentCornersOpenCv(blob) {
@@ -872,8 +997,10 @@
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(120, Math.round(w0 * scale));
     canvas.height = Math.max(120, Math.round(h0 * scale));
-    canvas.getContext('2d', { alpha:false }).drawImage(img, 0, 0, canvas.width, canvas.height);
+    const ctx = canvas.getContext('2d', { alpha:false, willReadFrequently:true });
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     cleanupLoadedImage(img);
+    const rgba = ctx.getImageData(0,0,canvas.width,canvas.height).data;
 
     const cv = window.cv;
     let src, gray, blur;
@@ -896,9 +1023,9 @@
         return edge;
       };
 
-      primaryEdges = makeCanny(32, 115, 1);
+      primaryEdges = makeCanny(28, 105, 1);
       variants.push(primaryEdges);
-      variants.push(makeCanny(58, 175, 1));
+      variants.push(makeCanny(52, 165, 1));
 
       const adaptive = new cv.Mat();
       cv.adaptiveThreshold(blur, adaptive, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 41, 9);
@@ -914,9 +1041,14 @@
       cv.bitwise_not(otsu, otsuInv);
       variants.push(otsuInv);
 
+      // 배경과 종이 색이 충분히 다른 촬영에서는 '검은 선'보다 종이 덩어리 자체를 찾는 편이 안정적입니다.
+      // 화면 테두리 색의 중앙값을 배경으로 보고 색 차이가 큰 영역을 별도 후보 마스크로 추가합니다.
+      const colorMask = buildBackgroundContrastMask(rgba, canvas.width, canvas.height, cv);
+      if (colorMask) variants.unshift(colorMask);
+
       let best = null, bestScore = -Infinity;
       const imageArea = canvas.width * canvas.height;
-      const epsilons = [0.012, 0.018, 0.024, 0.032, 0.042];
+      const epsilons = [0.010, 0.015, 0.021, 0.029, 0.040, 0.052];
 
       for (const binary of variants) {
         const contours = new cv.MatVector();
@@ -928,7 +1060,7 @@
             const cnt = contours.get(i);
             try {
               const area = Math.abs(cv.contourArea(cnt));
-              if (area < imageArea * 0.075 || area > imageArea * 0.995) continue;
+              if (area < imageArea * 0.065 || area > imageArea * 0.997) continue;
               const peri = cv.arcLength(cnt, true);
               for (const eps of epsilons) {
                 const approx = new cv.Mat();
@@ -939,7 +1071,7 @@
                   const pts = [];
                   for (let r = 0; r < 4; r++) pts.push({ x: approx.intPtr(r,0)[0], y: approx.intPtr(r,0)[1] });
                   const normalized = orderQuad(pts).map(p => ({ x:p.x/canvas.width, y:p.y/canvas.height }));
-                  const score = scoreDocumentQuad(normalized);
+                  const score = scoreDocumentQuad(normalized, rgba, canvas.width, canvas.height);
                   if (score > bestScore) { bestScore = score; best = normalized; }
                 } finally { approx.delete(); }
               }
@@ -948,10 +1080,10 @@
         } finally { work.delete(); contours.delete(); hierarchy.delete(); }
       }
 
-      if ((!best || bestScore < 1.05) && primaryEdges) {
+      if ((!best || bestScore < 1.85) && primaryEdges) {
         const hough = detectQuadFromHough(primaryEdges, canvas.width, canvas.height, cv);
         if (hough) {
-          const score = scoreDocumentQuad(hough);
+          const score = scoreDocumentQuad(hough, rgba, canvas.width, canvas.height);
           if (score > bestScore) { bestScore = score; best = hough; }
         }
       }
@@ -963,14 +1095,63 @@
     }
   }
 
-  function scoreDocumentQuad(points) {
+  function medianNumber(values) {
+    if (!values?.length) return 0;
+    const a=[...values].sort((x,y)=>x-y),m=(a.length-1)/2,lo=Math.floor(m),hi=Math.ceil(m);
+    return (a[lo]+a[hi])/2;
+  }
+
+  function buildBackgroundContrastMask(rgba, w, h, cv) {
+    try {
+      const step=Math.max(2,Math.round(Math.min(w,h)/240)), band=Math.max(3,Math.round(Math.min(w,h)*.022));
+      const rs=[],gs=[],bs=[];
+      const add=(x,y)=>{const i=(y*w+x)*4;rs.push(rgba[i]);gs.push(rgba[i+1]);bs.push(rgba[i+2]);};
+      for(let x=0;x<w;x+=step){for(let y=0;y<band;y+=step)add(x,y);for(let y=Math.max(0,h-band);y<h;y+=step)add(x,y);}
+      for(let y=band;y<h-band;y+=step){for(let x=0;x<band;x+=step)add(x,y);for(let x=Math.max(0,w-band);x<w;x+=step)add(x,y);}
+      if(rs.length<24)return null;
+      const br=medianNumber(rs),bg=medianNumber(gs),bb=medianNumber(bs),borderDist=[];
+      for(let i=0;i<rs.length;i++)borderDist.push(Math.abs(rs[i]-br)+Math.abs(gs[i]-bg)+Math.abs(bs[i]-bb));
+      const med=medianNumber(borderDist),mad=medianNumber(borderDist.map(v=>Math.abs(v-med)));
+      const threshold=clamp(med+Math.max(24,mad*3.4),30,155);
+      const mask=new cv.Mat(h,w,cv.CV_8UC1),out=mask.data;
+      for(let p=0,i=0;p<w*h;p++,i+=4){const d=Math.abs(rgba[i]-br)+Math.abs(rgba[i+1]-bg)+Math.abs(rgba[i+2]-bb);out[p]=d>=threshold?255:0;}
+      const k=Math.max(3,Math.min(11,(Math.round(Math.min(w,h)*.006)|1))),kernel=cv.Mat.ones(k,k,cv.CV_8U);
+      cv.morphologyEx(mask,mask,cv.MORPH_CLOSE,kernel,new cv.Point(-1,-1),2);
+      cv.morphologyEx(mask,mask,cv.MORPH_OPEN,kernel,new cv.Point(-1,-1),1);
+      kernel.delete();
+      return mask;
+    } catch(err){console.warn('배경 색 대비 마스크 생성 실패:',err);return null;}
+  }
+
+  function scoreQuadBoundaryContrast(points, rgba, w, h) {
+    if(!rgba||!w||!h||!points||points.length!==4)return 0;
+    const p=orderQuad(points).map(q=>({x:q.x*w,y:q.y*h})),edgeScores=[],gap=clamp(Math.min(w,h)*.006,3,10);
+    const rgb=(x,y)=>{const ix=Math.round(x),iy=Math.round(y);if(ix<0||iy<0||ix>=w||iy>=h)return null;const i=(iy*w+ix)*4;return[rgba[i],rgba[i+1],rgba[i+2]];};
+    for(let e=0;e<4;e++){
+      const a=p[e],b=p[(e+1)%4],dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
+      let total=0,n=0;
+      const samples=Math.max(24,Math.min(64,Math.round(len/18)));
+      for(let k=0;k<samples;k++){
+        const t=.08+.84*(k/(samples-1)),x=a.x+dx*t,y=a.y+dy*t;
+        const inside1=rgb(x+nx*gap,y+ny*gap),inside2=rgb(x+nx*gap*1.7,y+ny*gap*1.7),outside1=rgb(x-nx*gap,y-ny*gap),outside2=rgb(x-nx*gap*1.7,y-ny*gap*1.7);
+        if(!inside1||!outside1)continue;
+        const ii=inside2?inside1.map((v,j)=>(v+inside2[j])*.5):inside1,oo=outside2?outside1.map((v,j)=>(v+outside2[j])*.5):outside1;
+        total+=(Math.abs(ii[0]-oo[0])+Math.abs(ii[1]-oo[1])+Math.abs(ii[2]-oo[2]))/765;n++;
+      }
+      edgeScores.push(n?total/n:0);
+    }
+    const sorted=[...edgeScores].sort((a,b)=>a-b),avg=edgeScores.reduce((a,b)=>a+b,0)/Math.max(1,edgeScores.length),robust=sorted.length>=3?sorted[1]:sorted[0]||0;
+    return clamp(avg*.72+robust*.28,0,1);
+  }
+
+  function scoreDocumentQuad(points, rgba=null, w=0, h=0) {
     if (!points || points.length !== 4) return -Infinity;
     const p = orderQuad(points);
     if (!isConvexQuad(p)) return -Infinity;
     const area = Math.abs(polygonArea(p));
-    if (area < 0.075 || area > 0.995) return -Infinity;
+    if (area < 0.065 || area > 0.997) return -Infinity;
     const lengths = [distance(p[0],p[1]), distance(p[1],p[2]), distance(p[2],p[3]), distance(p[3],p[0])];
-    if (Math.min(...lengths) < 0.08) return -Infinity;
+    if (Math.min(...lengths) < 0.075) return -Infinity;
     const angleCos = p.map((cur, i) => {
       const prev = p[(i + 3) % 4], next = p[(i + 1) % 4];
       const ax = prev.x-cur.x, ay = prev.y-cur.y, bx = next.x-cur.x, by = next.y-cur.y;
@@ -979,9 +1160,10 @@
     const rectangularity = clamp(1 - angleCos.reduce((a,b)=>a+b,0)/4, 0, 1);
     const cx = p.reduce((a,q)=>a+q.x,0)/4, cy = p.reduce((a,q)=>a+q.y,0)/4;
     const centerScore = clamp(1 - Math.hypot(cx-.5,cy-.5)/.72, 0, 1);
-    const frameHits = p.filter(q => q.x < .012 || q.x > .988 || q.y < .012 || q.y > .988).length;
-    const framePenalty = frameHits >= 3 && area > .90 ? .65 : 0;
-    return area * 3.4 + rectangularity * .85 + centerScore * .2 - framePenalty;
+    const boundaryContrast = scoreQuadBoundaryContrast(p, rgba, w, h);
+    const frameHits = p.filter(q => q.x < .010 || q.x > .990 || q.y < .010 || q.y > .990).length;
+    const framePenalty = frameHits === 4 ? 1.00 : (frameHits >= 3 && area > .90 ? .85 : (frameHits >= 2 && area > .95 ? .35 : 0));
+    return area * 2.85 + rectangularity * .72 + centerScore * .16 + boundaryContrast * 1.85 - framePenalty;
   }
 
   function isConvexQuad(points) {
@@ -1145,7 +1327,6 @@
   }
 
   async function openCropEditor(page) {
-    if (!state.cvReady && !state.cvFailed) await waitForCv(4500);
     const img=await loadImage(page.sourceBlob); const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height; const scale=Math.min(1,1000/Math.max(w,h));
     els.cropCanvas.width=Math.max(1,Math.round(w*scale));els.cropCanvas.height=Math.max(1,Math.round(h*scale));
     const ctx=els.cropCanvas.getContext('2d',{alpha:false});ctx.fillStyle='#111';ctx.fillRect(0,0,els.cropCanvas.width,els.cropCanvas.height);ctx.drawImage(img,0,0,els.cropCanvas.width,els.cropCanvas.height);cleanupLoadedImage(img);
@@ -1451,16 +1632,6 @@
   function setLatestOutput(output){if(!output?.blob||!output?.name)return;state.latestOutput=output;els.outputInfo.textContent=`${output.name} · ${formatBytes(output.blob.size)}`;const f=new File([output.blob],output.name,{type:output.blob.type||'application/octet-stream'});const can=!!(navigator.share&&(!navigator.canShare||navigator.canShare({files:[f]})));els.shareOutputBtn.disabled=!navigator.share;els.shareOutputBtn.textContent=can?'공유 / 파일에 저장':'공유';openSheet(els.outputSheet);}
   async function shareBlob(blob,name){if(!navigator.share){downloadBlob(blob,name);return showToast('공유 기능이 없어 다운로드로 저장했습니다.');}const file=new File([blob],name,{type:blob.type||'application/octet-stream'});try{if(!navigator.canShare||navigator.canShare({files:[file]}))await navigator.share({files:[file],title:name});else await navigator.share({title:name,text:'ScanBox에서 만든 파일입니다.'});}catch(err){if(err?.name!=='AbortError'){downloadBlob(blob,name);showToast('공유 대신 다운로드로 저장했습니다.');}}}
   function downloadBlob(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.rel='noopener';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
-
-  async function waitForCv(ms){
-    if(state.cvReady)return true;
-    try{
-      return await Promise.race([
-        ensureOpenCv().then(()=>true).catch(()=>false),
-        new Promise(r=>setTimeout(()=>r(false),ms))
-      ]);
-    }catch{return false;}
-  }
 
   function showProgress(title,text,percent=0){els.progressTitle.textContent=title;els.progressText.textContent=text;updateProgress(percent);els.progressOverlay.classList.remove('hidden');}
   function updateProgress(percent,text){const p=clamp(Number(percent)||0,0,100);els.progressBar.style.width=`${p}%`;els.progressPercent.textContent=`${Math.round(p)}%`;if(text)els.progressText.textContent=text;}
