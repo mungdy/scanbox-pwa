@@ -1,4 +1,4 @@
-/* ScanBox PWA v1.1.8 - Robust Edge-Band Detection + Seamless Perspective
+/* ScanBox PWA v1.1.9 - Robust Edge-Band Detection + Seamless Perspective
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.8';
+  const APP_VERSION = '1.1.9';
   const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
   const THEME_KEY = 'scanbox.theme';
   const OCR_ENABLED_KEY = 'scanbox.ocr.enabled';
@@ -624,6 +624,28 @@
     const [page] = pages.splice(from, 1); pages.splice(target, 0, page); renderPdfEditor();
   }
 
+  function makeDropIndicator() {
+    const marker = document.createElement('div');
+    marker.className = 'drop-indicator';
+    marker.setAttribute('aria-hidden', 'true');
+    marker.innerHTML = '<span>여기에 놓기</span>';
+    return marker;
+  }
+
+  function placeDropIndicator(host, selector, draggingCard, indicator, clientY) {
+    const cards = [...host.querySelectorAll(selector)].filter(card => card !== draggingCard);
+    let placed = false;
+    for (const target of cards) {
+      const rect = target.getBoundingClientRect();
+      if (clientY < rect.top + rect.height / 2) {
+        host.insertBefore(indicator, target);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) host.appendChild(indicator);
+  }
+
   function bindPdfEditorDrag() {
     const host = els.pdfEditorPages;
     if (!host) return;
@@ -631,23 +653,30 @@
       const handle = e.target.closest('[data-editor-sort-handle]');
       if (!handle || state.busy) return;
       const card = handle.closest('.pdf-page-card'); if (!card) return;
-      e.preventDefault(); state.pdfEditor.drag = { card, pointerId: e.pointerId }; card.classList.add('dragging');
+      e.preventDefault();
+      const indicator = makeDropIndicator();
+      card.after(indicator);
+      state.pdfEditor.drag = { card, pointerId: e.pointerId, indicator, startY: e.clientY };
+      card.classList.add('dragging');
+      document.documentElement.classList.add('is-page-dragging');
       try { handle.setPointerCapture(e.pointerId); } catch {}
     });
     window.addEventListener('pointermove', e => {
       const d = state.pdfEditor.drag; if (!d || e.pointerId !== d.pointerId) return;
       e.preventDefault();
       const edge = 86;
-      if (e.clientY < edge) window.scrollBy(0, -12);
-      else if (e.clientY > innerHeight - edge) window.scrollBy(0, 12);
-      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.pdf-page-card');
-      if (!target || target === d.card || target.parentNode !== host) return;
-      const rect = target.getBoundingClientRect();
-      host.insertBefore(d.card, e.clientY < rect.top + rect.height / 2 ? target : target.nextSibling);
+      if (e.clientY < edge) window.scrollBy(0, -14);
+      else if (e.clientY > innerHeight - edge) window.scrollBy(0, 14);
+      d.card.style.transform = `translateY(${e.clientY - d.startY}px) scale(1.02)`;
+      placeDropIndicator(host, '.pdf-page-card', d.card, d.indicator, e.clientY);
     }, { passive: false });
     const finish = e => {
       const d = state.pdfEditor.drag; if (!d || (e.pointerId != null && e.pointerId !== d.pointerId)) return;
+      if (d.indicator?.isConnected) host.insertBefore(d.card, d.indicator);
+      d.indicator?.remove();
       d.card.classList.remove('dragging');
+      d.card.style.transform = '';
+      document.documentElement.classList.remove('is-page-dragging');
       const ids = [...host.querySelectorAll('.pdf-page-card')].map(el => el.dataset.editorPageId);
       const byId = new Map(state.pdfEditor.pages.map(p => [p.id, p]));
       state.pdfEditor.pages = ids.map(id => byId.get(id)).filter(Boolean);
@@ -1183,22 +1212,22 @@
     els.createOutputBtn.disabled = count === 0;
 
     els.pageList.innerHTML = state.pages.map((page, idx) => `
-      <article class="page-card" data-page-id="${escapeHtml(page.id)}">
-        <button class="page-preview-wrap page-preview-button" data-action="preview" aria-label="${idx + 1}페이지 크게 미리보기">
+      <article class="page-card compact-scan-card" data-page-id="${escapeHtml(page.id)}">
+        <button class="page-preview-wrap page-preview-button compact-page-thumb" data-action="preview" aria-label="${idx + 1}페이지 크게 미리보기">
           <img class="page-preview" src="${escapeHtml(page.previewUrl || '')}" alt="${idx + 1}페이지" />
-          <span class="preview-hint">미리보기</span>
+          <span class="preview-hint">보기</span>
         </button>
-        <div class="page-content">
+        <div class="page-content compact-page-controls">
           <div class="page-head">
-            <button class="drag-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 끌어서 순서 이동">≡</button>
+            <button class="drag-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동">≡</button>
             <label class="page-number-inline" aria-label="페이지 순서 번호">
               <span>[</span><input data-page-order-inline type="number" min="1" max="${count}" value="${idx + 1}" inputmode="numeric" aria-label="${idx + 1}페이지 순서" /><span>] 페이지</span>
             </label>
             <span class="page-source">${escapeHtml(page.sourceName || '')}</span>
           </div>
-          ${page.ocr ? `<span class="ocr-chip">OCR ${page.ocr.words.length.toLocaleString()}단어${page.ocr.editedText != null ? ' · 수정됨' : ''}</span>` : ''}
-          <div class="filter-tabs">
-            ${filterButton(page, 'color', '컬러')}${filterButton(page, 'bw', '흑백')}${filterButton(page, 'document', '문서')}
+          <div class="page-midline">
+            <div class="filter-tabs">${filterButton(page, 'color', '컬러')}${filterButton(page, 'bw', '흑백')}${filterButton(page, 'document', '문서')}</div>
+            ${page.ocr ? `<span class="ocr-chip">OCR${page.ocr.editedText != null ? ' · 수정됨' : ''}</span>` : ''}
           </div>
           <div class="page-actions">
             <div class="page-action-main"><button data-action="crop">영역 조정</button><button data-action="rotate">↻ 회전</button></div>
@@ -1227,20 +1256,22 @@
       const card = handle.closest('.page-card');
       if (!card) return;
       e.preventDefault();
-      state.drag = { card, pointerId: e.pointerId, mode: 'card' };
+      const indicator = makeDropIndicator();
+      card.after(indicator);
+      state.drag = { card, pointerId: e.pointerId, mode: 'card', indicator, startY: e.clientY };
       card.classList.add('dragging');
+      document.documentElement.classList.add('is-page-dragging');
       try { handle.setPointerCapture(e.pointerId); } catch {}
     });
     window.addEventListener('pointermove', e => {
       if (!state.drag || state.drag.mode !== 'card' || e.pointerId !== state.drag.pointerId) return;
       e.preventDefault();
-      const { card } = state.drag;
-      card.style.transform = `scale(1.015) translateY(${Math.max(-12, Math.min(12, e.movementY || 0))}px)`;
-      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.page-card');
-      if (!target || target === card || target.parentNode !== els.pageList) return;
-      const rect = target.getBoundingClientRect();
-      if (e.clientY < rect.top + rect.height / 2) els.pageList.insertBefore(card, target);
-      else els.pageList.insertBefore(card, target.nextSibling);
+      const { card, indicator, startY } = state.drag;
+      const edge = 86;
+      if (e.clientY < edge) window.scrollBy(0, -14);
+      else if (e.clientY > innerHeight - edge) window.scrollBy(0, 14);
+      card.style.transform = `translateY(${e.clientY - startY}px) scale(1.02)`;
+      placeDropIndicator(els.pageList, '.page-card', card, indicator, e.clientY);
     }, { passive: false });
     window.addEventListener('pointerup', endDrag);
     window.addEventListener('pointercancel', endDrag);
@@ -1248,8 +1279,11 @@
 
   function endDrag(e) {
     if (!state.drag || state.drag.mode !== 'card' || (e.pointerId != null && e.pointerId !== state.drag.pointerId)) return;
-    const { card } = state.drag;
+    const { card, indicator } = state.drag;
+    if (indicator?.isConnected) els.pageList.insertBefore(card, indicator);
+    indicator?.remove();
     card.classList.remove('dragging'); card.style.transform = '';
+    document.documentElement.classList.remove('is-page-dragging');
     const ids = [...els.pageList.querySelectorAll('.page-card')].map(el => el.dataset.pageId);
     const byId = new Map(state.pages.map(p => [p.id, p]));
     state.pages = ids.map(id => byId.get(id)).filter(Boolean);

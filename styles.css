@@ -202,3 +202,177 @@ button,input,select,textarea{font:inherit} button{cursor:pointer} button:disable
   .pdf-drag-handle{grid-column:1;grid-row:1/3}.pdf-page-check{grid-column:2;grid-row:1/3}.pdf-thumb{grid-column:3;grid-row:1/3;height:78px}.pdf-page-meta{grid-column:4;grid-row:1}.pdf-order-field{grid-column:4;grid-row:2;max-width:72px}.pdf-page-delete{grid-column:4;grid-row:3;justify-self:end;width:60px}
   .pdf-image-preview-stage{min-height:230px;max-height:48vh}.pdf-image-preview-stage img{max-height:48vh}.pdf-image-controls{grid-template-columns:1fr 1fr}.pdf-image-export-row{grid-template-columns:1fr}
 }
+
+/* v1.1.9 · compact scanner cards + clearer drag-and-drop feedback */
+.compact-scan-card{
+  grid-template-columns:80px minmax(0,1fr);
+  gap:12px;
+  align-items:stretch;
+  padding:10px;
+  min-height:126px;
+}
+.compact-page-thumb{
+  width:80px;
+  height:108px;
+  min-height:108px;
+  align-self:center;
+  border-radius:12px;
+  background:#f2f4f6;
+}
+.compact-page-thumb .page-preview{
+  width:100%;
+  height:100%;
+  max-width:none;
+  max-height:none;
+  object-fit:contain;
+}
+.compact-page-thumb .preview-hint{
+  right:5px;
+  bottom:5px;
+  padding:4px 6px;
+  font-size:8px;
+}
+.compact-page-controls{
+  min-width:0;
+  min-height:108px;
+  gap:7px;
+  justify-content:center;
+}
+.compact-page-controls .page-head{
+  min-width:0;
+  gap:7px;
+}
+.compact-page-controls .page-source{
+  max-width:34%;
+  font-size:9px;
+}
+.page-midline{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.page-midline .filter-tabs{
+  flex:1 1 auto;
+  min-width:0;
+}
+.page-midline .ocr-chip{
+  flex:0 0 auto;
+  margin:0;
+  padding:5px 7px;
+  font-size:9px;
+}
+.compact-page-controls .filter-btn{
+  min-height:34px;
+  padding:7px 11px;
+}
+.compact-page-controls .page-actions{
+  margin-top:0;
+  gap:8px;
+}
+.compact-page-controls .page-action-main{
+  gap:6px;
+}
+.compact-page-controls .page-actions button{
+  min-height:34px;
+  padding:7px 10px;
+}
+
+/* Drag state: keep the grabbed card visually distinct and show the exact insertion slot. */
+html.is-page-dragging,html.is-page-dragging body{
+  overscroll-behavior-y:contain;
+  user-select:none;
+  -webkit-user-select:none;
+}
+.page-card.dragging,.pdf-page-card.dragging{
+  opacity:.84;
+  box-shadow:0 24px 64px rgba(22,40,72,.24),0 0 0 2px rgba(49,130,246,.32);
+  z-index:80;
+  pointer-events:none;
+  transition:none!important;
+  will-change:transform;
+}
+.drag-handle,.pdf-drag-handle{
+  position:relative;
+}
+.page-card.dragging .drag-handle,.pdf-page-card.dragging .pdf-drag-handle{
+  background:#dcebff!important;
+  color:#1769d2!important;
+}
+.drop-indicator{
+  position:relative;
+  height:16px;
+  margin:2px 8px;
+  border-radius:999px;
+  background:linear-gradient(90deg,rgba(49,130,246,.18),#3182f6 14%,#3182f6 86%,rgba(49,130,246,.18));
+  box-shadow:0 0 0 1px rgba(49,130,246,.1),0 4px 14px rgba(49,130,246,.18);
+  animation:dropIndicatorPulse .85s ease-in-out infinite alternate;
+}
+.drop-indicator::before,.drop-indicator::after{
+  content:"";
+  position:absolute;
+  top:50%;
+  width:8px;
+  height:8px;
+  margin-top:-4px;
+  border-radius:50%;
+  background:#3182f6;
+}
+.drop-indicator::before{left:-2px}
+.drop-indicator::after{right:-2px}
+.drop-indicator span{
+  position:absolute;
+  right:16px;
+  top:50%;
+  transform:translateY(-50%);
+  border-radius:999px;
+  background:#1769d2;
+  color:#fff;
+  padding:3px 7px;
+  font-size:8px;
+  line-height:1;
+  font-weight:900;
+  letter-spacing:-.02em;
+  white-space:nowrap;
+}
+@keyframes dropIndicatorPulse{from{opacity:.74}to{opacity:1}}
+
+:root[data-theme="dark"] .compact-page-thumb{background:#232831}
+:root[data-theme="dark"] .page-card.dragging,:root[data-theme="dark"] .pdf-page-card.dragging{
+  box-shadow:0 24px 64px rgba(0,0,0,.5),0 0 0 2px rgba(76,154,255,.44);
+}
+:root[data-theme="dark"] .page-card.dragging .drag-handle,
+:root[data-theme="dark"] .pdf-page-card.dragging .pdf-drag-handle{
+  background:#173352!important;
+  color:#8fc2ff!important;
+}
+:root[data-theme="dark"] .drop-indicator{
+  background:linear-gradient(90deg,rgba(76,154,255,.16),#4c9aff 14%,#4c9aff 86%,rgba(76,154,255,.16));
+  box-shadow:0 0 0 1px rgba(76,154,255,.14),0 4px 16px rgba(0,0,0,.32);
+}
+:root[data-theme="dark"] .drop-indicator::before,:root[data-theme="dark"] .drop-indicator::after{background:#4c9aff}
+:root[data-theme="dark"] .drop-indicator span{background:#265f9f}
+
+@media(max-width:680px){
+  .compact-scan-card{grid-template-columns:72px minmax(0,1fr);gap:10px;min-height:116px}
+  .compact-page-thumb{width:72px;height:98px;min-height:98px}
+  .compact-page-controls{min-height:98px}
+  .compact-page-controls .page-source{max-width:30%}
+}
+@media(max-width:430px){
+  .page-card.compact-scan-card{grid-template-columns:66px minmax(0,1fr);gap:9px;padding:9px;min-height:108px}
+  .compact-page-thumb{width:66px;height:90px;min-height:90px}
+  .compact-page-controls{min-height:90px;gap:6px}
+  .compact-page-controls .page-head{gap:5px}
+  .compact-page-controls .drag-handle{width:38px;height:38px;flex-basis:38px;border-radius:11px;font-size:19px}
+  .compact-page-controls .page-number-inline{font-size:13px}
+  .compact-page-controls .page-number-inline input{width:29px;height:29px}
+  .compact-page-controls .page-source{display:none}
+  .compact-page-controls .filter-btn{min-height:32px;padding:6px 9px;font-size:10px}
+  .compact-page-controls .page-actions{gap:6px}
+  .compact-page-controls .page-actions button{min-height:32px;padding:6px 8px;font-size:10px}
+  .compact-page-controls .page-delete-button{padding-left:9px!important;padding-right:9px!important}
+  .page-midline .ocr-chip{display:none}
+  .drop-indicator{margin-left:5px;margin-right:5px}
+  .drop-indicator span{right:12px}
+}
