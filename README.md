@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/32276380/README.md)
+[README_KO.md](https://github.com/user-attachments/files/32276380/README_KO.md)
 # ScanBox PWA v1.1.1
 
 아이폰에서 문서를 촬영하거나 이미지/PDF를 불러와 문서 보정, OCR, 검색 가능한 PDF, JPG/PNG 저장, PDF 편집 및 상호 변환을 수행하는 개인용 PWA입니다.
