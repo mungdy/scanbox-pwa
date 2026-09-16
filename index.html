@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="ScanBox" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="referrer" content="no-referrer" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; upgrade-insecure-requests" />
+  <title>ScanBox · 문서 스캔</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
+
+  <script defer src="./vendor/jszip/jszip.min.js"></script>
+  <script defer src="./secure-runtime.js"></script>
+  <script defer src="./pdf-engine.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <button class="brand-button" data-go-tab="scanner" aria-label="ScanBox 홈">
+        <img src="./icons/icon-192.png" class="brand-icon" alt="" />
+        <span>ScanBox</span>
+      </button>
+      <div class="header-actions">
+        <span id="networkBadge" class="network-dot" title="네트워크 상태"><i></i><span>온라인</span></span>
+        <button id="aboutBtn" class="round-button" aria-label="안내">?</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="intro">
+      <p class="kicker">ScanBox 1.1.1</p>
+      <h1>문서는 깔끔하게.<br />저장은 원하는 형식으로.</h1>
+      <p>촬영부터 문서 보정, OCR, 검색 PDF와 PDF 편집까지 기기에서 처리합니다. 고정 버전 엔진은 최초 지문을 생성해 앱 캐시에 잠급니다.</p>
+    </section>
+
+    <nav class="segmented" aria-label="주요 메뉴">
+      <button class="segment active" data-tab="scanner">스캔</button>
+      <button class="segment" data-tab="converter">변환</button>
+      <button class="segment" data-tab="settings">설정</button>
+    </nav>
+
+    <section id="scannerTab" class="tab-panel active">
+      <section class="action-grid">
+        <button id="cameraBtn" class="quick-action primary-action">
+          <span class="action-icon" aria-hidden="true">⌁</span>
+          <span><strong>문서 촬영</strong><small>카메라로 바로 스캔</small></span>
+        </button>
+        <button id="galleryBtn" class="quick-action">
+          <span class="action-icon" aria-hidden="true">▧</span>
+          <span><strong>사진 불러오기</strong><small>여러 장 한 번에</small></span>
+        </button>
+        <button id="pdfEditBtn" class="quick-action">
+          <span class="action-icon" aria-hidden="true">PDF</span>
+          <span><strong>PDF 편집</strong><small>페이지를 풀어서 재편집</small></span>
+        </button>
+      </section>
+
+      <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
+      <input id="galleryInput" type="file" accept="image/*" multiple hidden />
+      <input id="pdfEditInput" type="file" accept="application/pdf" hidden />
+
+      <section id="scannerOptions" class="soft-card compact-card">
+        <label class="toggle-line">
+          <span><strong>자동 문서 보정</strong><small>테두리를 찾아 정면으로 펴줍니다.</small></span>
+          <input id="autoCorrectToggle" type="checkbox" checked />
+          <i></i>
+        </label>
+        <div class="engine-line">
+          <span id="opencvState" class="engine-state">문서 보정 엔진 준비 중</span>
+        </div>
+      </section>
+
+      <section class="pages-section">
+        <div class="section-title-row">
+          <div><h2>페이지</h2><p id="pageCount">0장</p></div>
+          <button id="clearPagesBtn" class="ghost-danger" disabled>전체 삭제</button>
+        </div>
+
+        <div id="emptyPages" class="empty-state">
+          <div class="empty-symbol">▱</div>
+          <strong>스캔할 문서를 추가해 주세요.</strong>
+          <span>사진 또는 PDF를 불러와도 됩니다.</span>
+        </div>
+        <div id="pageList" class="page-list"></div>
+      </section>
+
+      <section id="exportSection" class="export-section soft-card">
+        <div class="section-title-row no-margin">
+          <div><h2>내보내기</h2><p id="estimatedSize">페이지를 추가하면 예상 용량을 표시합니다.</p></div>
+        </div>
+
+        <div class="field-group filename-field">
+          <label for="fileNameInput">파일명</label>
+          <div class="inline-field">
+            <input id="fileNameInput" type="text" autocomplete="off" />
+            <button id="suggestNameBtn" class="mini-button" disabled>OCR 추천</button>
+          </div>
+          <button id="nameSuggestion" class="suggestion-chip hidden" type="button"></button>
+        </div>
+
+        <div class="two-fields">
+          <label class="field-group">
+            <span>저장 형식</span>
+            <select id="exportFormat">
+              <option value="searchable-pdf">검색 가능한 PDF</option>
+              <option value="pdf">일반 PDF</option>
+              <option value="jpg">JPG 이미지</option>
+              <option value="png">PNG 이미지</option>
+            </select>
+          </label>
+          <label class="field-group">
+            <span>화질</span>
+            <select id="qualityPreset">
+              <option value="economy">용량 절약</option>
+              <option value="standard" selected>표준</option>
+              <option value="high">고화질</option>
+              <option value="max">원본에 가깝게</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="export-actions">
+          <button id="ocrPreviewBtn" class="secondary-button" disabled>OCR 확인</button>
+          <button id="createOutputBtn" class="primary-button" disabled>파일 만들기</button>
+        </div>
+        <p class="privacy-note">검색 PDF는 글자 위치를 따라 투명 OCR 레이어를 배치합니다. 문서 내용은 외부 서버로 업로드하지 않으며, 엔진 파일만 최초 준비 시 내려받습니다.</p>
+      </section>
+    </section>
+
+    <section id="converterTab" class="tab-panel">
+      <section class="tool-list">
+        <article class="tool-row">
+          <div class="tool-badge">PDF</div>
+          <div class="tool-copy"><strong>PDF → 이미지</strong><span>각 페이지를 JPG 또는 PNG로 저장합니다.</span></div>
+          <select id="pdfImageFormat" aria-label="PDF 이미지 형식"><option value="jpg">JPG</option><option value="png">PNG</option></select>
+          <button id="pdfToImageBtn" class="small-primary">선택</button>
+          <input id="pdfInput" type="file" accept="application/pdf" hidden />
+        </article>
+
+        <article class="tool-row">
+          <div class="tool-badge">IMG</div>
+          <div class="tool-copy"><strong>이미지 → PDF</strong><span>여러 이미지를 한 파일로 묶습니다.</span></div>
+          <select id="imagePdfMode" aria-label="이미지 PDF 방식"><option value="pdf">일반 PDF</option><option value="searchable-pdf">OCR PDF</option></select>
+          <button id="imagesToPdfBtn" class="small-primary">선택</button>
+          <input id="imagesForPdfInput" type="file" accept="image/*" multiple hidden />
+        </article>
+      </section>
+
+      <section class="info-card">
+        <strong>문서 사진을 보정하면서 PDF로 만들려면</strong>
+        <p>변환이 아니라 ‘스캔 → 사진 불러오기’를 사용해 주세요. 자동 테두리 보정과 수동 4점 보정을 사용할 수 있습니다.</p>
+      </section>
+    </section>
+
+    <section id="settingsTab" class="tab-panel">
+      <section class="settings-list soft-card">
+        <div class="settings-row">
+          <div><strong>보안 · 오프라인 준비</strong><span>버전이 고정된 OCR·문서보정·PDF 엔진의 SHA-256 지문을 최초 준비 때 생성해 앱 전용 캐시에 잠급니다.</span></div>
+          <button id="offlinePrepBtn" class="mini-button">준비</button>
+        </div>
+        <div class="settings-row">
+          <div><strong>보안 모드</strong><span id="securityDetail">외부 스크립트를 HTML에서 직접 실행하지 않고, 최초 지문과 일치하는 앱 캐시 사본에서 실행합니다.</span></div>
+          <span id="securityBadge" class="value-pill secure-pill">강화</span>
+        </div>
+        <div class="settings-row">
+          <div><strong>OCR 언어</strong><span>현재 한국어 + 영어로 고정되어 있습니다.</span></div>
+          <span class="value-pill">KOR + ENG</span>
+        </div>
+        <div class="settings-row">
+          <div><strong>개인정보 처리</strong><span>문서·이미지·OCR 결과는 브라우저 내부에서 처리하며 ScanBox 서버로 보내지 않습니다.</span></div>
+          <span class="value-pill">로컬 처리</span>
+        </div>
+      </section>
+      <section class="info-card">
+        <strong>보안 · 오프라인에 대해</strong>
+        <p>최초 준비 시에만 고정 버전 배포 파일을 HTTPS로 받아 SHA-256 지문을 계산하고 잠급니다. 이후에는 앱 전용 캐시 사본을 사용합니다. CDN 파일이 같은 버전 URL에서 달라지면 실행을 중단합니다. iOS가 사이트 데이터를 삭제하면 다시 준비해야 합니다.</p>
+      </section>
+    </section>
+  </main>
+
+  <section id="cropSheet" class="sheet hidden" aria-modal="true" role="dialog">
+    <div class="sheet-backdrop" data-close-crop></div>
+    <div class="sheet-panel crop-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-heading"><div><h3>문서 영역 조정</h3><p>네 모서리를 문서 끝에 맞춘 뒤 적용하세요.</p></div><button class="round-button" data-close-crop>×</button></div>
+      <div class="crop-stage"><canvas id="cropCanvas"></canvas></div>
+      <div class="sheet-actions"><button id="resetCropBtn" class="secondary-button">자동 다시 찾기</button><button id="applyCropBtn" class="primary-button">보정 적용</button></div>
+    </div>
+  </section>
+
+  <section id="progressOverlay" class="overlay hidden" aria-live="polite">
+    <div class="progress-card">
+      <div class="progress-top"><span id="progressTitle">처리 중</span><span id="progressPercent">0%</span></div>
+      <p id="progressText">파일을 준비하고 있습니다.</p>
+      <div class="progress-track"><div id="progressBar"></div></div>
+    </div>
+  </section>
+
+  <section id="outputSheet" class="sheet hidden">
+    <div class="sheet-backdrop" data-close-output></div>
+    <div class="sheet-panel compact-sheet">
+      <div class="sheet-handle"></div>
+      <div class="success-mark">✓</div>
+      <h3>파일이 준비되었습니다.</h3>
+      <p id="outputInfo"></p>
+      <div class="sheet-actions"><button id="saveOutputBtn" class="primary-button">저장</button><button id="shareOutputBtn" class="secondary-button">공유 / 파일에 저장</button></div>
+      <button class="sheet-close-text" data-close-output>닫기</button>
+    </div>
+  </section>
+
+  <section id="ocrSheet" class="sheet hidden">
+    <div class="sheet-backdrop" data-close-ocr></div>
+    <div class="sheet-panel tall-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-heading"><div><h3>OCR 인식 결과</h3><p>검색 PDF에는 단어 위치 정보까지 함께 사용합니다.</p></div><button class="round-button" data-close-ocr>×</button></div>
+      <textarea id="ocrTextArea" readonly></textarea>
+      <div class="sheet-actions"><button id="copyOcrBtn" class="primary-button">전체 복사</button><button class="secondary-button" data-close-ocr>닫기</button></div>
+    </div>
+  </section>
+
+  <section id="aboutSheet" class="sheet hidden">
+    <div class="sheet-backdrop" data-close-about></div>
+    <div class="sheet-panel tall-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-heading"><div><h3>ScanBox 1.1.1</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
+      <div class="about-copy">
+        <h4>1. 촬영</h4><p>자동 보정이 켜져 있으면 문서 테두리를 찾아 원근을 보정합니다. 결과가 마음에 들지 않으면 각 페이지의 ‘영역 조정’에서 네 모서리를 직접 옮길 수 있습니다.</p>
+        <h4>2. 정리</h4><p>카드의 ≡ 손잡이를 누른 채 위아래로 움직이면 페이지 순서를 바꿀 수 있습니다. PDF도 편집기로 불러오면 같은 방식으로 정리할 수 있습니다.</p>
+        <h4>3. 검색 PDF</h4><p>OCR 단어의 좌표를 PDF의 실제 스캔 위치에 맞춰 투명하게 배치하므로 검색·복사 시 위치가 기존 버전보다 더 자연스럽습니다.</p>
+        <h4>4. 저장</h4><p>파일을 만든 뒤 ‘공유 / 파일에 저장’을 누르면 iOS 공유 시트를 통해 iCloud Drive, 나의 iPhone, AirDrop, 메일 등으로 보낼 수 있습니다.</p>
+        <h4>5. 보안</h4><p>문서 데이터는 ScanBox 서버로 전송하지 않습니다. OpenCV·Tesseract·PDF.js처럼 필요한 엔진은 버전을 고정하고 최초 SHA-256 지문을 잠근 뒤 같은 출처의 앱 전용 캐시에서 실행합니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+</body>
+</html>
