@@ -1,5 +1,5 @@
 {
-  "name": "ScanBox 1.1.11 - 문서 스캔 & OCR",
+  "name": "ScanBox 1.2.0 - 문서 스캔 & OCR",
   "short_name": "ScanBox",
   "description": "보안 강화된 로컬 문서 스캔, 정밀 OCR PDF, PDF 편집, JPG/PNG 변환 PWA",
   "start_url": "./",

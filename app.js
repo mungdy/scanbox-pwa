@@ -1,4 +1,4 @@
-/* ScanBox PWA v1.1.11 - Robust Edge-Band Detection + Seamless Perspective
+/* ScanBox PWA v1.2.0 - Robust Edge-Band Detection + Seamless Perspective
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.11';
+  const APP_VERSION = '1.2.0';
   const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
   const THEME_KEY = 'scanbox.theme';
   const OCR_ENABLED_KEY = 'scanbox.ocr.enabled';
@@ -80,7 +80,7 @@
     pdfjs: null,
     pdfjsPromise: null,
     pdfLibPromise: null,
-    pdfEditor: { docs: new Map(), pages: [], drag: null, ocrEditPageIds: [] },
+    pdfEditor: { docs: new Map(), pages: [], drag: null, ocrEditPageIds: [], previewIndex: -1 },
     pdfImageJob: null,
     cropEditor: null,
     drag: null,
@@ -108,9 +108,9 @@
       exportFormat: $('#exportFormat'), qualityPreset: $('#qualityPreset'), pdfPageSize: $('#pdfPageSize'), estimatedSize: $('#estimatedSize'),
       ocrPreviewBtn: $('#ocrPreviewBtn'), createOutputBtn: $('#createOutputBtn'),
       pdfEditorAddBtn: $('#pdfEditorAddBtn'), pdfEditorInput: $('#pdfEditorInput'), pdfEditorWorkspace: $('#pdfEditorWorkspace'), pdfEditorActions: $('#pdfEditorActions'), pdfEditorInfo: $('#pdfEditorInfo'), pdfEditorCount: $('#pdfEditorCount'), pdfEditorPages: $('#pdfEditorPages'),
-      pdfSelectAllBtn: $('#pdfSelectAllBtn'), pdfExtractBtn: $('#pdfExtractBtn'), pdfOcrTextBtn: $('#pdfOcrTextBtn'), pdfDeleteBtn: $('#pdfDeleteBtn'), pdfClearBtn: $('#pdfClearBtn'), pdfMergeSaveBtn: $('#pdfMergeSaveBtn'), pdfSplitBtn: $('#pdfSplitBtn'), pdfSplitRanges: $('#pdfSplitRanges'),
+      pdfSelectAllBtn: $('#pdfSelectAllBtn'), pdfExtractBtn: $('#pdfExtractBtn'), pdfRotateAllBtn: $('#pdfRotateAllBtn'), pdfDeleteBtn: $('#pdfDeleteBtn'), pdfClearBtn: $('#pdfClearBtn'), pdfMergeSaveBtn: $('#pdfMergeSaveBtn'), pdfSplitBtn: $('#pdfSplitBtn'), pdfSplitRanges: $('#pdfSplitRanges'),
       pdfImageFormat: $('#pdfImageFormat'), pdfToImageBtn: $('#pdfToImageBtn'), pdfInput: $('#pdfInput'),
-      pdfImageSheet: $('#pdfImageSheet'), pdfImageCounter: $('#pdfImageCounter'), pdfImagePreviewStage: $('#pdfImagePreviewStage'), pdfImagePreview: $('#pdfImagePreview'), pdfImagePrev: $('#pdfImagePrev'), pdfImageNext: $('#pdfImageNext'), pdfImageRotateLeft: $('#pdfImageRotateLeft'), pdfImageRotateRight: $('#pdfImageRotateRight'), pdfImageThumbs: $('#pdfImageThumbs'), pdfImageSheetFormat: $('#pdfImageSheetFormat'), pdfImageExportBtn: $('#pdfImageExportBtn'),
+      pdfImageSheet: $('#pdfImageSheet'), pdfImageTitle: $('#pdfImageTitle'), pdfImageCounter: $('#pdfImageCounter'), pdfImagePreviewStage: $('#pdfImagePreviewStage'), pdfImagePreview: $('#pdfImagePreview'), pdfImagePrev: $('#pdfImagePrev'), pdfImageNext: $('#pdfImageNext'), pdfImageRotateLeft: $('#pdfImageRotateLeft'), pdfImageRotateRight: $('#pdfImageRotateRight'), pdfImageThumbs: $('#pdfImageThumbs'), pdfImageSheetFormat: $('#pdfImageSheetFormat'), pdfImageExportBtn: $('#pdfImageExportBtn'), pdfImageExportRow: $('#pdfImageExportRow'), pdfImagePreviewNote: $('#pdfImagePreviewNote'),
       offlinePrepBtn: $('#offlinePrepBtn'), offlinePrepBadge: $('#offlinePrepBadge'), offlinePrepDetail: $('#offlinePrepDetail'), securityBadge: $('#securityBadge'), securityDetail: $('#securityDetail'), themeMode: $('#themeMode'),
       cropSheet: $('#cropSheet'), cropCanvas: $('#cropCanvas'), cropMagnifier: $('#cropMagnifier'), resetCropBtn: $('#resetCropBtn'), applyCropBtn: $('#applyCropBtn'),
       scanPreviewSheet: $('#scanPreviewSheet'), scanPreviewStage: $('#scanPreviewStage'), scanPreviewImage: $('#scanPreviewImage'), scanPreviewCounter: $('#scanPreviewCounter'), scanPreviewPrev: $('#scanPreviewPrev'), scanPreviewRotate: $('#scanPreviewRotate'), scanPreviewNext: $('#scanPreviewNext'),
@@ -446,6 +446,8 @@
         state.pdfEditor.pages.splice(idx, 1);
         prunePdfEditorDocs();
         renderPdfEditor();
+      } else if (btn.dataset.editorAction === 'preview') {
+        openPdfEditorPreview(idx);
       }
     });
 
@@ -475,23 +477,22 @@
       } catch (err) { handleError(err, '선택 페이지를 추출하지 못했습니다.'); }
       finally { state.busy = false; hideProgress(); }
     });
-    els.pdfOcrTextBtn?.addEventListener('click', async () => {
-      const selected = state.pdfEditor.pages.filter(p => p.selected);
-      if (!selected.length || state.busy) return;
+
+    els.pdfRotateAllBtn?.addEventListener('click', async () => {
+      if (!state.pdfEditor.pages.length || state.busy) return;
       try {
         state.busy = true;
-        showProgress('OCR 텍스트 읽기', '선택한 PDF의 검색 텍스트를 읽고 있습니다.', 0);
-        const chunks = [];
-        for (let i = 0; i < selected.length; i++) {
-          const page = selected[i];
-          const text = page.ocrTextOverride != null ? page.ocrTextOverride : await extractPdfPageText(page);
-          chunks.push(`--- ${i + 1}선택 · 편집 ${state.pdfEditor.pages.indexOf(page) + 1}페이지 ---\n${text}`);
-          updateProgress(((i + 1) / selected.length) * 100, `${i + 1} / ${selected.length} 페이지 텍스트 읽기`);
+        showProgress('PDF 전체 회전', '모든 PDF 편집 페이지를 오른쪽으로 90° 회전하고 있습니다.', 0);
+        for (let i = 0; i < state.pdfEditor.pages.length; i++) {
+          const page = state.pdfEditor.pages[i];
+          page.rotation = normalizeRightAngle((page.rotation || 0) + 90);
+          await refreshPdfEditorPagePreview(page, 700);
+          updateProgress(((i + 1) / Math.max(1, state.pdfEditor.pages.length)) * 100, `${i + 1} / ${state.pdfEditor.pages.length} 페이지 회전`);
         }
-        state.pdfEditor.ocrEditPageIds = selected.map(p => p.id);
-        els.pdfOcrTextArea.value = chunks.join('\n\n');
-        hideProgress(); openSheet(els.pdfOcrSheet);
-      } catch (err) { handleError(err, 'PDF OCR 텍스트를 읽지 못했습니다.'); }
+        renderPdfEditor();
+        if (state.pdfEditor.previewIndex >= 0) renderPdfPreviewSheet();
+        showToast('PDF 편집 페이지 전체를 회전했습니다.');
+      } catch (err) { handleError(err, 'PDF 페이지 전체 회전에 실패했습니다.'); }
       finally { state.busy = false; hideProgress(); }
     });
 
@@ -545,8 +546,15 @@
     els.pdfImageRotateRight?.addEventListener('click', () => rotatePdfImagePage(90));
     els.pdfImageThumbs?.addEventListener('click', e => {
       const btn = e.target.closest('[data-pdf-image-index]');
-      if (!btn || !state.pdfImageJob) return;
-      state.pdfImageJob.index = clamp(Number(btn.dataset.pdfImageIndex) || 0, 0, state.pdfImageJob.pages.length - 1);
+      if (!btn) return;
+      const next = Number(btn.dataset.pdfImageIndex) || 0;
+      if (state.pdfImageSheetMode === 'editor') {
+        state.pdfEditor.previewIndex = clamp(next, 0, Math.max(0, state.pdfEditor.pages.length - 1));
+        renderPdfPreviewSheet();
+        return;
+      }
+      if (!state.pdfImageJob) return;
+      state.pdfImageJob.index = clamp(next, 0, state.pdfImageJob.pages.length - 1);
       renderPdfImageJob();
     });
     els.pdfImageSheetFormat?.addEventListener('change', () => { if (els.pdfImageFormat) els.pdfImageFormat.value = els.pdfImageSheetFormat.value; });
@@ -595,7 +603,7 @@
             state.pdfEditor.pages.push({
               id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
               sourceId, pageIndex: n - 1, sourceName: file.name, originalPage: n,
-              previewUrl: URL.createObjectURL(thumb), selected: false,
+              previewUrl: URL.createObjectURL(thumb), selected: false, rotation: 0,
             });
             added++;
           }
@@ -616,15 +624,15 @@
     els.pdfEditorActions?.classList.toggle('hidden', !hasPages);
     els.pdfEditorInfo?.classList.toggle('hidden', !hasPages);
     if (els.pdfEditorCount) els.pdfEditorCount.textContent = hasPages ? `${pages.length}페이지 · ${selected}개 선택` : '0페이지';
-    [els.pdfSelectAllBtn, els.pdfClearBtn, els.pdfMergeSaveBtn, els.pdfSplitBtn].forEach(b => { if (b) b.disabled = !hasPages; });
-    [els.pdfExtractBtn, els.pdfOcrTextBtn, els.pdfDeleteBtn].forEach(b => { if (b) b.disabled = selected === 0; });
+    [els.pdfSelectAllBtn, els.pdfClearBtn, els.pdfMergeSaveBtn, els.pdfSplitBtn, els.pdfRotateAllBtn].forEach(b => { if (b) b.disabled = !hasPages; });
+    [els.pdfExtractBtn, els.pdfDeleteBtn].forEach(b => { if (b) b.disabled = selected === 0; });
     if (els.pdfSelectAllBtn) els.pdfSelectAllBtn.textContent = hasPages && selected === pages.length ? '선택 해제' : '전체 선택';
     els.pdfEditorPages.innerHTML = pages.map((page, idx) => `
       <article class="pdf-page-card unified-page-card ${page.selected ? 'selected' : ''}" data-editor-page-id="${escapeHtml(page.id)}">
-        <div class="pdf-thumb"><img src="${escapeHtml(page.previewUrl)}" alt="${idx + 1}페이지" /></div>
+        <button class="pdf-thumb pdf-thumb-button" type="button" data-editor-action="preview" aria-label="${idx + 1}페이지 크게 미리보기"><img src="${escapeHtml(page.previewUrl)}" alt="${idx + 1}페이지" /></button>
         <div class="pdf-card-content">
           <div class="pdf-card-head unified-card-head">
-            <button class="pdf-drag-handle vertical-sort-handle" data-editor-sort-handle aria-label="${idx + 1}페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동"><span class="sort-icon-stack" aria-hidden="true"><svg viewBox="0 0 28 40" focusable="false"><path d="M14 18V4M14 4L5 13M14 4l9 9M14 22v14M14 36l-9-9M14 36l9-9"/></svg></span></button>
+            <button class="pdf-drag-handle vertical-sort-handle" data-editor-sort-handle aria-label="${idx + 1}페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동"><span class="sort-icon-stack" aria-hidden="true"><svg viewBox="0 0 20 28" focusable="false"><path d="M10 3 L18 11 H2 Z"></path><path d="M10 25 L18 17 H2 Z"></path></svg></span></button>
             <label class="pdf-order-inline page-fraction" aria-label="PDF 페이지 순서">
               <input type="number" data-editor-order min="1" max="${pages.length}" value="${idx + 1}" inputmode="numeric" /><span>/${pages.length} 페이지</span>
             </label>
@@ -632,8 +640,7 @@
             <button class="pdf-page-delete top-delete-button" data-editor-action="delete">삭제</button>
           </div>
           <div class="pdf-card-meta-line">
-            <span>${escapeHtml(page.sourceName)} · 원본 ${page.originalPage}p</span>
-            ${page.ocrTextOverride != null ? '<b>OCR 수정됨</b>' : ''}
+            <span>${escapeHtml(page.sourceName)} · 원본 ${page.originalPage}p${page.rotation ? ` · 회전 ${normalizeRightAngle(page.rotation)}°` : ''}</span>
           </div>
         </div>
       </article>`).join('');
@@ -734,15 +741,19 @@
         src = await lib.PDFDocument.load(source.bytes.slice(), { ignoreEncryption: false, updateMetadata: false });
         loaded.set(entry.sourceId, src);
       }
+      let copied;
       if (entry.ocrTextOverride != null) {
         const rebuiltBytes = await rebuildPdfEditorPageWithOcr(entry);
         const rebuilt = await lib.PDFDocument.load(rebuiltBytes, { ignoreEncryption: false });
-        const [copied] = await out.copyPages(rebuilt, [0]);
-        out.addPage(copied);
+        [copied] = await out.copyPages(rebuilt, [0]);
       } else {
-        const [copied] = await out.copyPages(src, [entry.pageIndex]);
-        out.addPage(copied);
+        [copied] = await out.copyPages(src, [entry.pageIndex]);
       }
+      if (entry.rotation) {
+        const baseAngle = Number(copied.getRotation?.().angle || 0);
+        copied.setRotation(lib.degrees(normalizeRightAngle(baseAngle + entry.rotation)));
+      }
+      out.addPage(copied);
       onProgress?.((i + 1) / entries.length);
     }
     return await out.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
@@ -818,7 +829,7 @@
   function cleanupPdfEditor() {
     if (!state.pdfEditor) return;
     state.pdfEditor.pages.forEach(revokeEditorPage);
-    state.pdfEditor.pages = []; state.pdfEditor.docs.clear(); state.pdfEditor.drag = null; state.pdfEditor.ocrEditPageIds = [];
+    state.pdfEditor.pages = []; state.pdfEditor.docs.clear(); state.pdfEditor.drag = null; state.pdfEditor.ocrEditPageIds = []; state.pdfEditor.previewIndex = -1;
   }
 
   function bindSheets() {
@@ -1244,7 +1255,7 @@
         </button>
         <div class="page-content compact-page-controls">
           <div class="page-head unified-card-head">
-            <button class="drag-handle vertical-sort-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동"><span class="sort-icon-stack" aria-hidden="true"><svg viewBox="0 0 28 40" focusable="false"><path d="M14 18V4M14 4L5 13M14 4l9 9M14 22v14M14 36l-9-9M14 36l9-9"/></svg></span></button>
+            <button class="drag-handle vertical-sort-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동"><span class="sort-icon-stack" aria-hidden="true"><svg viewBox="0 0 20 28" focusable="false"><path d="M10 3 L18 11 H2 Z"></path><path d="M10 25 L18 17 H2 Z"></path></svg></span></button>
             <label class="page-number-inline page-fraction" aria-label="페이지 순서 번호">
               <input data-page-order-inline type="number" min="1" max="${count}" value="${idx + 1}" inputmode="numeric" aria-label="${idx + 1}페이지 순서" /><span>/${count} 페이지</span>
             </label>
@@ -2304,6 +2315,7 @@
         updateProgress((i / Math.max(1, pages.length)) * 90, `${i + 1} / ${pages.length} 페이지 미리보기`);
         await refreshPdfImagePreview(i, 520);
       }
+      setPdfImageSheetMode('image');
       renderPdfImageJob();
       updateProgress(100, '미리보기 준비 완료');
       hideProgress(); openSheet(els.pdfImageSheet);
@@ -2351,6 +2363,14 @@
   }
 
   async function stepPdfImagePreview(delta){
+    if (state.pdfImageSheetMode === 'editor') {
+      if (!state.pdfEditor.pages.length || state.busy) return;
+      const next = clamp(state.pdfEditor.previewIndex + delta, 0, state.pdfEditor.pages.length - 1);
+      if (next === state.pdfEditor.previewIndex) return;
+      state.pdfEditor.previewIndex = next;
+      renderPdfPreviewSheet();
+      return;
+    }
     const job = state.pdfImageJob;
     if (!job || state.busy) return;
     const next = clamp(job.index + delta, 0, job.pages.length - 1);
@@ -2364,6 +2384,7 @@
   }
 
   async function rotatePdfImagePage(delta){
+    if (state.pdfImageSheetMode === 'editor') return rotatePdfEditorPreview(delta);
     const job = state.pdfImageJob;
     if (!job || state.busy) return;
     const entry = job.pages[job.index];
@@ -2412,8 +2433,81 @@
     if (els.pdfImageThumbs) els.pdfImageThumbs.innerHTML = '';
   }
 
+  function setPdfImageSheetMode(mode){
+    state.pdfImageSheetMode = mode;
+    if (els.pdfImageTitle) els.pdfImageTitle.textContent = mode === 'editor' ? 'PDF 편집 미리보기' : 'PDF → 이미지 미리보기';
+    if (els.pdfImagePreviewNote) els.pdfImagePreviewNote.textContent = mode === 'editor'
+      ? '회전한 방향은 PDF 편집 저장 결과에 반영됩니다. 원본 PDF 파일 자체는 바뀌지 않습니다.'
+      : '페이지마다 회전값을 따로 적용합니다. 원본 PDF는 변경하지 않습니다.';
+    els.pdfImageExportRow?.classList.toggle('hidden', mode === 'editor');
+  }
+
+  async function refreshPdfEditorPagePreview(entry, maxDimension=900){
+    const source = state.pdfEditor.docs.get(entry.sourceId);
+    if (!source) throw new Error('PDF 원본 페이지 정보를 찾지 못했습니다.');
+    const pdfjs = await getPdfJs();
+    let pdf = null;
+    try {
+      pdf = await loadPdfDocument(pdfjs, source.bytes.slice());
+      const page = await pdf.getPage(entry.pageIndex + 1);
+      const rotation = normalizeRightAngle((page.rotate || 0) + (entry.rotation || 0));
+      const viewport = safePdfViewport(page, 0.75, maxDimension, rotation);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.ceil(viewport.width)); canvas.height = Math.max(1, Math.ceil(viewport.height));
+      const ctx = canvas.getContext('2d', { alpha: false }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await renderPdfPageSafely(page, ctx, viewport);
+      const blob = await canvasToBlob(canvas, 'image/jpeg', 0.84);
+      if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      entry.previewUrl = URL.createObjectURL(blob);
+      releaseCanvas(canvas); page.cleanup?.();
+    } finally { try { pdf?.cleanup?.(); await pdf?.destroy?.(); } catch {} }
+  }
+
+  function openPdfEditorPreview(index){
+    if (!state.pdfEditor.pages.length) return;
+    state.pdfEditor.previewIndex = clamp(index, 0, state.pdfEditor.pages.length - 1);
+    setPdfImageSheetMode('editor');
+    renderPdfPreviewSheet();
+    openSheet(els.pdfImageSheet);
+  }
+
+  function renderPdfPreviewSheet(){
+    const pages = state.pdfEditor.pages;
+    if (!pages.length) return;
+    state.pdfEditor.previewIndex = clamp(state.pdfEditor.previewIndex, 0, pages.length - 1);
+    const current = pages[state.pdfEditor.previewIndex];
+    if (els.pdfImageCounter) els.pdfImageCounter.textContent = `${state.pdfEditor.previewIndex + 1} / ${pages.length} 페이지 · 회전 ${normalizeRightAngle(current.rotation || 0)}°`;
+    if (els.pdfImagePreview) els.pdfImagePreview.src = current.previewUrl || '';
+    if (els.pdfImagePrev) els.pdfImagePrev.disabled = state.pdfEditor.previewIndex <= 0;
+    if (els.pdfImageNext) els.pdfImageNext.disabled = state.pdfEditor.previewIndex >= pages.length - 1;
+    if (els.pdfImageThumbs) els.pdfImageThumbs.innerHTML = pages.map((p, i) => `
+      <button type="button" class="pdf-image-thumb ${i === state.pdfEditor.previewIndex ? 'active' : ''}" data-pdf-image-index="${i}" aria-label="${i + 1}페이지 미리보기">
+        ${p.previewUrl ? `<img src="${escapeHtml(p.previewUrl)}" alt="${i + 1}페이지" />` : `<span>${i + 1}</span>`}
+        <b>${i + 1}</b>
+      </button>`).join('');
+  }
+
+  async function rotatePdfEditorPreview(delta){
+    if (state.busy || !state.pdfEditor.pages.length || state.pdfEditor.previewIndex < 0) return;
+    const entry = state.pdfEditor.pages[state.pdfEditor.previewIndex];
+    entry.rotation = normalizeRightAngle((entry.rotation || 0) + delta);
+    state.busy = true;
+    try { await refreshPdfEditorPagePreview(entry, 900); renderPdfEditor(); renderPdfPreviewSheet(); }
+    catch (err) { handleError(err, 'PDF 페이지를 회전하지 못했습니다.'); }
+    finally { state.busy = false; }
+  }
+
   function closePdfImageSheet(){
+    if (state.pdfImageSheetMode === 'editor') {
+      state.pdfEditor.previewIndex = -1;
+      if (els.pdfImagePreview) els.pdfImagePreview.removeAttribute('src');
+      if (els.pdfImageThumbs) els.pdfImageThumbs.innerHTML = '';
+      setPdfImageSheetMode('image');
+      closeSheet(els.pdfImageSheet);
+      return;
+    }
     cleanupPdfImageJob();
+    setPdfImageSheetMode('image');
     closeSheet(els.pdfImageSheet);
   }
 

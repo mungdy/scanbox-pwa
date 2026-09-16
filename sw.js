@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.1.11';
+const VERSION = '1.2.0';
 const APP_CACHE = `scanbox-app-v${VERSION}`;
 const RUNTIME_CACHE = `scanbox-runtime-v${VERSION}`;
 const APP_SHELL = [
