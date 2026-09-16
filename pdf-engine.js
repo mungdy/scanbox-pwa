@@ -55,6 +55,7 @@
   function collectBmpChars(pages) {
     const set = new Set();
     for (const page of pages) {
+      for (const ch of String(page.ocrTextOverride || '')) { const cp = ch.codePointAt(0); if (cp > 0 && cp <= 0xFFFF) set.add(cp); }
       for (const word of page.ocrWords || []) {
         for (const ch of String(word.text || '')) {
           const cp = ch.codePointAt(0);
@@ -159,6 +160,7 @@
     if (!pages.length) throw new Error('PDF에 넣을 페이지가 없습니다.');
     const searchable = !!(options && options.searchable);
     const title = String(options && options.title || 'ScanBox');
+    const pageSize = ['fit','a4','a3'].includes(options && options.pageSize) ? options.pageSize : 'fit';
     const writer = new PdfWriter();
 
     const pagesRootId = writer.add('<<>>');
@@ -185,13 +187,21 @@
       if (!imageBytes.length) throw new Error('빈 이미지 페이지가 있습니다.');
 
       const portrait = imgH >= imgW;
-      const pw = portrait ? 595.276 : 841.89;
-      const ph = portrait ? 841.89 : 595.276;
-      const scale = Math.min(pw / imgW, ph / imgH);
-      const dw = imgW * scale;
-      const dh = imgH * scale;
-      const dx = (pw - dw) / 2;
-      const dy = (ph - dh) / 2;
+      let pw, ph, dw, dh, dx = 0, dy = 0;
+      if (pageSize === 'fit') {
+        const longEdge = 841.89;
+        if (portrait) { ph = longEdge; pw = longEdge * (imgW / imgH); }
+        else { pw = longEdge; ph = longEdge * (imgH / imgW); }
+        dw = pw; dh = ph;
+      } else {
+        const base = pageSize === 'a3' ? [841.89, 1190.551] : [595.276, 841.89];
+        pw = portrait ? base[0] : base[1];
+        ph = portrait ? base[1] : base[0];
+        // 사용자가 규격을 명시적으로 선택한 경우 여백 없이 페이지 전체를 채웁니다.
+        dw = pw; dh = ph;
+      }
+      const scaleX = dw / imgW;
+      const scaleY = dh / imgH;
 
       const imageId = writer.add(writer.stream(
         `/Type /XObject /Subtype /Image /Width ${Math.round(imgW)} /Height ${Math.round(imgH)} ` +
@@ -203,6 +213,16 @@
       content.push(`q ${fmt(dw)} 0 0 ${fmt(dh)} ${fmt(dx)} ${fmt(dy)} cm /Im0 Do Q`);
 
       if (searchable && fontId) {
+        const override = page.ocrTextOverride == null ? null : String(page.ocrTextOverride);
+        if (override != null) {
+          const safe = override.replace(/[\u0000-\u001F\u007F]/g, ' ').trim();
+          if (safe) {
+            const actual = utf16beHex(safe, true);
+            content.push(`/Span << /ActualText <${actual}> >> BDC`);
+            content.push(`BT /F0 2 Tf 3 Tr 1 0 0 1 1 1 Tm <0020> Tj ET`);
+            content.push('EMC');
+          }
+        } else {
         let count = 0;
         for (const rawWord of page.ocrWords || []) {
           if (count++ > 12000) break;
@@ -211,13 +231,14 @@
           const hex = ucs2Hex(word.text);
           if (!hex) continue;
 
-          const x = dx + word.x * scale;
-          const baselineY = ph - (dy + (word.y + word.h) * scale) + Math.max(0.5, word.h * scale * 0.08);
-          const fontSize = Math.max(2, word.h * scale * 0.92);
+          const x = dx + word.x * scaleX;
+          const baselineY = ph - (dy + (word.y + word.h) * scaleY) + Math.max(0.5, word.h * scaleY * 0.08);
+          const fontSize = Math.max(2, word.h * scaleY * 0.92);
           const actual = utf16beHex(word.text, true);
           content.push(`/Span << /ActualText <${actual}> >> BDC`);
           content.push(`BT /F0 ${fmt(fontSize)} Tf 3 Tr 1 0 0 1 ${fmt(x)} ${fmt(baselineY)} Tm <${hex}> Tj ET`);
           content.push('EMC');
+        }
         }
       }
 

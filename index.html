@@ -38,14 +38,14 @@
 
   <main class="app-shell">
     <section class="intro">
-      <p class="kicker">ScanBox 1.1.5</p>
+      <p class="kicker">ScanBox 1.1.6</p>
       <h1>문서는 깔끔하게.<br />저장은 원하는 형식으로.</h1>
       <p>촬영부터 문서 보정, OCR, 검색 PDF와 PDF 편집까지 기기에서 처리합니다. 고정 버전 엔진은 최초 지문을 생성해 앱 캐시에 잠급니다.</p>
     </section>
 
     <nav class="segmented" aria-label="주요 메뉴">
       <button class="segment active" data-tab="scanner">스캔</button>
-      <button class="segment" data-tab="converter">변환</button>
+      <button class="segment" data-tab="editor">PDF 편집</button>
       <button class="segment" data-tab="settings">설정</button>
     </nav>
 
@@ -59,15 +59,10 @@
           <span class="action-icon" aria-hidden="true">▧</span>
           <span><strong>사진 불러오기</strong><small>여러 장 한 번에</small></span>
         </button>
-        <button id="pdfEditBtn" class="quick-action">
-          <span class="action-icon" aria-hidden="true">PDF</span>
-          <span><strong>PDF 편집</strong><small>페이지를 풀어서 재편집</small></span>
-        </button>
       </section>
 
       <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
       <input id="galleryInput" type="file" accept="image/*" multiple hidden />
-      <input id="pdfEditInput" type="file" accept="application/pdf" hidden />
 
       <section id="scannerOptions" class="soft-card compact-card">
         <label class="toggle-line">
@@ -80,6 +75,12 @@
           <input id="ocrToggle" type="checkbox" />
           <i aria-hidden="true"></i>
         </label>
+        <div id="ocrLangRow" class="ocr-lang-row">
+          <span>OCR 언어</span>
+          <label><input id="ocrLangKor" type="checkbox" checked /><b>KOR</b></label>
+          <label><input id="ocrLangEng" type="checkbox" checked /><b>ENG</b></label>
+          <label><input id="ocrLangChi" type="checkbox" /><b>CHI</b></label>
+        </div>
         <div class="engine-line">
           <span id="opencvState" class="engine-state">문서 보정 엔진 준비 중</span>
         </div>
@@ -94,7 +95,11 @@
         <div id="emptyPages" class="empty-state">
           <div class="empty-symbol">▱</div>
           <strong>스캔할 문서를 추가해 주세요.</strong>
-          <span>사진 또는 PDF를 불러와도 됩니다.</span>
+          <span>여러 장의 사진을 한 번에 불러올 수 있습니다.</span>
+        </div>
+        <div id="pageThumbSection" class="page-thumb-section hidden">
+          <div class="thumb-section-head"><strong>페이지 순서</strong><span>썸네일을 끌거나 번호를 바꿔 이동</span></div>
+          <div id="pageThumbList" class="page-thumb-list"></div>
         </div>
         <div id="pageList" class="page-list"></div>
       </section>
@@ -130,6 +135,14 @@
               <option value="max">원본에 가깝게</option>
             </select>
           </label>
+          <label class="field-group">
+            <span>PDF 페이지</span>
+            <select id="pdfPageSize">
+              <option value="fit">사진에 맞춤</option>
+              <option value="a4">A4</option>
+              <option value="a3">A3</option>
+            </select>
+          </label>
         </div>
 
         <div class="export-actions">
@@ -140,28 +153,53 @@
       </section>
     </section>
 
-    <section id="converterTab" class="tab-panel">
-      <section class="tool-list">
+    <section id="editorTab" class="tab-panel">
+      <section class="soft-card pdf-editor-card">
+        <div class="section-title-row no-margin">
+          <div><h2>PDF 편집</h2><p id="pdfEditorCount">PDF를 추가해 주세요.</p></div>
+          <button id="pdfEditorAddBtn" class="small-primary">PDF 추가</button>
+          <input id="pdfEditorInput" type="file" accept="application/pdf" multiple hidden />
+        </div>
+        <div class="editor-toolbar">
+          <button id="pdfSelectAllBtn" class="secondary-mini" disabled>전체 선택</button>
+          <button id="pdfExtractBtn" class="secondary-mini" disabled>선택 추출</button>
+          <button id="pdfOcrTextBtn" class="secondary-mini" disabled>OCR 텍스트 수정</button>
+          <button id="pdfDeleteBtn" class="secondary-mini danger-text" disabled>선택 삭제</button>
+          <button id="pdfClearBtn" class="secondary-mini danger-text" disabled>전체 비우기</button>
+        </div>
+        <div id="pdfEditorEmpty" class="empty-state compact-empty">
+          <div class="empty-symbol">PDF</div>
+          <strong>합치거나 편집할 PDF를 추가해 주세요.</strong>
+          <span>여러 파일을 한 번에 선택할 수 있습니다.</span>
+        </div>
+        <div id="pdfEditorPages" class="pdf-editor-pages"></div>
+      </section>
+
+      <section class="soft-card pdf-editor-actions">
+        <div class="field-group">
+          <label for="pdfSplitRanges">나누기 범위</label>
+          <input id="pdfSplitRanges" type="text" placeholder="예: 1-3, 4-6, 7" autocomplete="off" />
+          <small>쉼표로 나눈 각 범위를 별도 PDF로 만들며 여러 개면 ZIP으로 저장합니다.</small>
+        </div>
+        <div class="editor-action-grid">
+          <button id="pdfMergeSaveBtn" class="primary-button" disabled>현재 순서로 PDF 저장</button>
+          <button id="pdfSplitBtn" class="secondary-button" disabled>범위대로 나누기</button>
+        </div>
+      </section>
+
+      <section class="tool-list pdf-extra-tools">
         <article class="tool-row">
-          <div class="tool-badge">PDF</div>
+          <div class="tool-badge">IMG</div>
           <div class="tool-copy"><strong>PDF → 이미지</strong><span>각 페이지를 JPG 또는 PNG로 저장합니다.</span></div>
           <select id="pdfImageFormat" aria-label="PDF 이미지 형식"><option value="jpg">JPG</option><option value="png">PNG</option></select>
           <button id="pdfToImageBtn" class="small-primary">선택</button>
           <input id="pdfInput" type="file" accept="application/pdf" hidden />
         </article>
-
-        <article class="tool-row">
-          <div class="tool-badge">IMG</div>
-          <div class="tool-copy"><strong>이미지 → PDF</strong><span>여러 이미지를 한 파일로 묶습니다.</span></div>
-          <select id="imagePdfMode" aria-label="이미지 PDF 방식"><option value="pdf">일반 PDF</option><option value="searchable-pdf">OCR PDF</option></select>
-          <button id="imagesToPdfBtn" class="small-primary">선택</button>
-          <input id="imagesForPdfInput" type="file" accept="image/*" multiple hidden />
-        </article>
       </section>
 
       <section class="info-card">
-        <strong>문서 사진을 보정하면서 PDF로 만들려면</strong>
-        <p>변환이 아니라 ‘스캔 → 사진 불러오기’를 사용해 주세요. 자동 테두리 보정과 수동 4점 보정을 사용할 수 있습니다.</p>
+        <strong>원본 PDF 구조를 최대한 유지합니다.</strong>
+        <p>합치기·순서 변경·삭제·추출·나누기는 페이지 자체를 복사하므로 검색 텍스트와 벡터 요소를 가능한 한 보존합니다. 암호화되었거나 특수한 PDF는 지원되지 않을 수 있습니다.</p>
       </section>
     </section>
 
@@ -186,8 +224,8 @@
           </select>
         </div>
         <div class="settings-row">
-          <div><strong>OCR 언어</strong><span>현재 한국어 + 영어로 고정되어 있습니다.</span></div>
-          <span class="value-pill">KOR + ENG</span>
+          <div><strong>OCR 언어</strong><span>스캔 탭에서 KOR / ENG / CHI를 각각 선택하며 마지막 선택을 기억합니다.</span></div>
+          <span id="ocrLangSummary" class="value-pill">KOR + ENG</span>
         </div>
         <div class="settings-row">
           <div><strong>개인정보 처리</strong><span>문서·이미지·OCR 결과는 브라우저 내부에서 처리하며 ScanBox 서버로 보내지 않습니다.</span></div>
@@ -236,8 +274,20 @@
     <div class="sheet-panel tall-sheet">
       <div class="sheet-handle"></div>
       <div class="sheet-heading"><div><h3>OCR 인식 결과</h3><p>검색 PDF에는 단어 위치 정보까지 함께 사용합니다.</p></div><button class="round-button" data-close-ocr>×</button></div>
-      <textarea id="ocrTextArea" readonly></textarea>
-      <div class="sheet-actions"><button id="copyOcrBtn" class="primary-button">전체 복사</button><button class="secondary-button" data-close-ocr>닫기</button></div>
+      <textarea id="ocrTextArea"></textarea>
+      <p class="ocr-edit-note">텍스트를 교정한 뒤 적용하면 검색 PDF의 OCR 텍스트 레이어에 반영됩니다. 보이는 스캔 이미지는 바뀌지 않습니다.</p>
+      <div class="sheet-actions"><button id="applyOcrTextBtn" class="primary-button">OCR 수정 적용</button><button id="copyOcrBtn" class="secondary-button">전체 복사</button><button class="secondary-button" data-close-ocr>닫기</button></div>
+    </div>
+  </section>
+
+  <section id="pdfOcrSheet" class="sheet hidden">
+    <div class="sheet-backdrop" data-close-pdf-ocr></div>
+    <div class="sheet-panel tall-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-heading"><div><h3>PDF OCR 텍스트 수정</h3><p>선택한 페이지의 검색 텍스트만 수정합니다. 보이는 글씨는 바뀌지 않습니다.</p></div><button class="round-button" data-close-pdf-ocr>×</button></div>
+      <textarea id="pdfOcrTextArea"></textarea>
+      <p class="ocr-edit-note">수정된 페이지는 저장할 때 화면을 고해상도로 다시 렌더링해 검색 텍스트 레이어를 재생성합니다. 원본 벡터 구조를 유지하려면 이 기능을 사용하지 마세요.</p>
+      <div class="sheet-actions"><button id="applyPdfOcrTextBtn" class="primary-button">수정 적용</button><button class="secondary-button" data-close-pdf-ocr>취소</button></div>
     </div>
   </section>
 
@@ -245,11 +295,11 @@
     <div class="sheet-backdrop" data-close-about></div>
     <div class="sheet-panel tall-sheet">
       <div class="sheet-handle"></div>
-      <div class="sheet-heading"><div><h3>ScanBox 1.1.5</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
+      <div class="sheet-heading"><div><h3>ScanBox 1.1.6</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
       <div class="about-copy">
         <h4>1. 촬영</h4><p>자동 보정이 켜져 있으면 문서 테두리를 찾아 원근을 보정합니다. 결과가 마음에 들지 않으면 각 페이지의 ‘영역 조정’에서 네 모서리를 직접 옮길 수 있습니다.</p>
-        <h4>2. 정리</h4><p>카드의 ≡ 손잡이를 누른 채 위아래로 움직이면 페이지 순서를 바꿀 수 있습니다. PDF도 편집기로 불러오면 같은 방식으로 정리할 수 있습니다.</p>
-        <h4>3. OCR · 검색 PDF</h4><p>OCR은 기본 OFF이며 마지막 선택을 기억합니다. OCR을 켜면 텍스트 확인과 검색 가능한 PDF를 사용할 수 있습니다.</p>
+        <h4>2. 정리</h4><p>스캔 페이지는 썸네일을 끌거나 번호를 바꿔 순서를 정리할 수 있습니다. PDF 편집 탭에서도 같은 방식으로 페이지를 재배열할 수 있습니다.</p>
+        <h4>3. OCR · 검색 PDF</h4><p>OCR은 기본 OFF이며 마지막 선택을 기억합니다. KOR / ENG / CHI를 독립 선택할 수 있고 OCR 텍스트를 교정해 검색 PDF에 반영할 수 있습니다.</p>
         <h4>4. 저장</h4><p>파일을 만든 뒤 ‘공유 / 파일에 저장’을 누르면 iOS 공유 시트를 통해 iCloud Drive, 나의 iPhone, AirDrop, 메일 등으로 보낼 수 있습니다.</p>
         <h4>5. 보안</h4><p>문서 데이터는 ScanBox 서버로 전송하지 않습니다. OCR·PDF 엔진은 버전을 고정하고 최초 SHA-256 지문을 잠근 뒤 앱 전용 캐시에서 실행합니다. 문서 보정은 OpenCV 가속이 실패해도 내장 호환 엔진으로 계속 사용할 수 있습니다.</p>
       </div>

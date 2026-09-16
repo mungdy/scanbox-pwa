@@ -1,16 +1,18 @@
-/* ScanBox PWA v1.1.5 - Robust Edge-Band Detection + Seamless Perspective
+/* ScanBox PWA v1.1.6 - Robust Edge-Band Detection + Seamless Perspective
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
- * - PDF 생성은 자체 경량 엔진 사용(외부 PDF 생성 라이브러리/폰트 의존 제거)
+ * - 스캔 PDF 생성은 자체 경량 엔진, PDF 구조 편집은 고정 버전 pdf-lib 사용
  */
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.5';
+  const APP_VERSION = '1.1.6';
   const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
   const THEME_KEY = 'scanbox.theme';
   const OCR_ENABLED_KEY = 'scanbox.ocr.enabled';
+  const OCR_LANG_KEY = 'scanbox.ocr.languages';
+  const PDF_PAGE_SIZE_KEY = 'scanbox.pdf.page-size';
   const DETECT_MAX = 1600;
   const IMPORT_MAX = 5200;
   const PDFJS_VERSION = '6.3.289';
@@ -47,6 +49,8 @@
     pdfjsWorker: asset(`pdfjs-worker-${PDFJS_VERSION}`, `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/legacy/build/pdf.worker.min.mjs`, 'pdfjs/pdf.worker.min.mjs'),
     kor: asset('tessdata-kor-1.0.0', 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/kor@1.0.0/4.0.0_best_int/kor.traineddata.gz', 'tesseract/lang/kor.traineddata.gz', 'application/gzip'),
     eng: asset('tessdata-eng-1.0.0', 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int/eng.traineddata.gz', 'tesseract/lang/eng.traineddata.gz', 'application/gzip'),
+    chiTra: asset('tessdata-chi-tra-1.0.0', 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/chi_tra@1.0.0/4.0.0_best_int/chi_tra.traineddata.gz', 'tesseract/lang/chi_tra.traineddata.gz', 'application/gzip'),
+    pdfLib: asset('pdf-lib-1.17.1', 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js', 'pdf-lib/pdf-lib.min.js'),
   });
   const TESS_CORE_FILES = [
     'tesseract-core.wasm.js','tesseract-core-simd.wasm.js','tesseract-core-lstm.wasm.js',
@@ -57,8 +61,8 @@
     `https://cdn.jsdelivr.net/npm/tesseract.js-core@${TESS_CORE_VERSION}/${file}`,
     `tesseract/core/${file}`
   ));
-  const ALL_RUNTIME_ASSETS = [SOURCES.opencv, SOURCES.tesseractMain, SOURCES.tesseractWorker, ...TESS_CORE_ASSETS, SOURCES.kor, SOURCES.eng, SOURCES.pdfjsMain, SOURCES.pdfjsWorker];
-  const ESSENTIAL_RUNTIME_ASSETS = [SOURCES.tesseractMain, SOURCES.tesseractWorker, ...TESS_CORE_ASSETS, SOURCES.kor, SOURCES.eng, SOURCES.pdfjsMain, SOURCES.pdfjsWorker];
+  const ALL_RUNTIME_ASSETS = [SOURCES.opencv, SOURCES.tesseractMain, SOURCES.tesseractWorker, ...TESS_CORE_ASSETS, SOURCES.kor, SOURCES.eng, SOURCES.chiTra, SOURCES.pdfjsMain, SOURCES.pdfjsWorker, SOURCES.pdfLib];
+  const ESSENTIAL_RUNTIME_ASSETS = [SOURCES.tesseractMain, SOURCES.tesseractWorker, ...TESS_CORE_ASSETS, SOURCES.pdfjsMain, SOURCES.pdfjsWorker, SOURCES.pdfLib];
 
   const state = {
     pages: [],
@@ -71,8 +75,12 @@
     ocrWorkerTimer: null,
     ocrLogger: null,
     ocrAssetsPromise: null,
+    ocrAssetsKey: '',
+    ocrWorkerLangKey: '',
     pdfjs: null,
     pdfjsPromise: null,
+    pdfLibPromise: null,
+    pdfEditor: { docs: new Map(), pages: [], drag: null, ocrEditPageIds: [] },
     cropEditor: null,
     drag: null,
     defaultName: '',
@@ -89,20 +97,22 @@
     cleanupLegacySecurityMetadata();
     Object.assign(els, {
       networkBadge: $('#networkBadge'), aboutBtn: $('#aboutBtn'),
-      cameraBtn: $('#cameraBtn'), galleryBtn: $('#galleryBtn'), pdfEditBtn: $('#pdfEditBtn'),
-      cameraInput: $('#cameraInput'), galleryInput: $('#galleryInput'), pdfEditInput: $('#pdfEditInput'),
+      cameraBtn: $('#cameraBtn'), galleryBtn: $('#galleryBtn'),
+      cameraInput: $('#cameraInput'), galleryInput: $('#galleryInput'),
       autoCorrectToggle: $('#autoCorrectToggle'), ocrToggle: $('#ocrToggle'), opencvState: $('#opencvState'),
-      pageCount: $('#pageCount'), clearPagesBtn: $('#clearPagesBtn'), emptyPages: $('#emptyPages'), pageList: $('#pageList'),
+      ocrLangRow: $('#ocrLangRow'), ocrLangKor: $('#ocrLangKor'), ocrLangEng: $('#ocrLangEng'), ocrLangChi: $('#ocrLangChi'), ocrLangSummary: $('#ocrLangSummary'),
+      pageCount: $('#pageCount'), clearPagesBtn: $('#clearPagesBtn'), emptyPages: $('#emptyPages'), pageList: $('#pageList'), pageThumbSection: $('#pageThumbSection'), pageThumbList: $('#pageThumbList'),
       fileNameInput: $('#fileNameInput'),
-      exportFormat: $('#exportFormat'), qualityPreset: $('#qualityPreset'), estimatedSize: $('#estimatedSize'),
+      exportFormat: $('#exportFormat'), qualityPreset: $('#qualityPreset'), pdfPageSize: $('#pdfPageSize'), estimatedSize: $('#estimatedSize'),
       ocrPreviewBtn: $('#ocrPreviewBtn'), createOutputBtn: $('#createOutputBtn'),
+      pdfEditorAddBtn: $('#pdfEditorAddBtn'), pdfEditorInput: $('#pdfEditorInput'), pdfEditorCount: $('#pdfEditorCount'), pdfEditorEmpty: $('#pdfEditorEmpty'), pdfEditorPages: $('#pdfEditorPages'),
+      pdfSelectAllBtn: $('#pdfSelectAllBtn'), pdfExtractBtn: $('#pdfExtractBtn'), pdfOcrTextBtn: $('#pdfOcrTextBtn'), pdfDeleteBtn: $('#pdfDeleteBtn'), pdfClearBtn: $('#pdfClearBtn'), pdfMergeSaveBtn: $('#pdfMergeSaveBtn'), pdfSplitBtn: $('#pdfSplitBtn'), pdfSplitRanges: $('#pdfSplitRanges'),
       pdfImageFormat: $('#pdfImageFormat'), pdfToImageBtn: $('#pdfToImageBtn'), pdfInput: $('#pdfInput'),
-      imagePdfMode: $('#imagePdfMode'), imagesToPdfBtn: $('#imagesToPdfBtn'), imagesForPdfInput: $('#imagesForPdfInput'),
       offlinePrepBtn: $('#offlinePrepBtn'), offlinePrepBadge: $('#offlinePrepBadge'), offlinePrepDetail: $('#offlinePrepDetail'), securityBadge: $('#securityBadge'), securityDetail: $('#securityDetail'), themeMode: $('#themeMode'),
       cropSheet: $('#cropSheet'), cropCanvas: $('#cropCanvas'), cropMagnifier: $('#cropMagnifier'), resetCropBtn: $('#resetCropBtn'), applyCropBtn: $('#applyCropBtn'),
       progressOverlay: $('#progressOverlay'), progressTitle: $('#progressTitle'), progressText: $('#progressText'), progressBar: $('#progressBar'), progressPercent: $('#progressPercent'),
       outputSheet: $('#outputSheet'), outputInfo: $('#outputInfo'), saveOutputBtn: $('#saveOutputBtn'), shareOutputBtn: $('#shareOutputBtn'),
-      ocrSheet: $('#ocrSheet'), ocrTextArea: $('#ocrTextArea'), copyOcrBtn: $('#copyOcrBtn'), aboutSheet: $('#aboutSheet'), toast: $('#toast'),
+      ocrSheet: $('#ocrSheet'), ocrTextArea: $('#ocrTextArea'), applyOcrTextBtn: $('#applyOcrTextBtn'), copyOcrBtn: $('#copyOcrBtn'), pdfOcrSheet: $('#pdfOcrSheet'), pdfOcrTextArea: $('#pdfOcrTextArea'), applyPdfOcrTextBtn: $('#applyPdfOcrTextBtn'), aboutSheet: $('#aboutSheet'), toast: $('#toast'),
     });
 
     state.defaultName = `${kstDateString()}_스캔`;
@@ -111,20 +121,23 @@
     bindNavigation();
     bindScanner();
     bindOcrPreference();
-    bindConverter();
+    bindPdfPageSize();
+    bindPdfEditor();
     bindSheets();
     bindCropEditor();
     bindOfflinePrep();
     bindTheme();
     bindPageDrag();
+    bindThumbDrag();
 
     updateNetworkState();
     updateSecurityStatus();
     updateOfflinePrepStatus();
     window.addEventListener('online', updateNetworkState);
     window.addEventListener('offline', updateNetworkState);
-    els.exportFormat.addEventListener('change', updateEstimatedSize);
+    els.exportFormat.addEventListener('change', () => { updatePdfPageSizeUi(); updateEstimatedSize(); });
     els.qualityPreset.addEventListener('change', updateEstimatedSize);
+    els.pdfPageSize?.addEventListener('change', updateEstimatedSize);
 
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
       navigator.serviceWorker.register('./sw.js').then(() => {
@@ -186,6 +199,7 @@
 
   function cleanupRuntime() {
     cleanupPages(state.pages);
+    cleanupPdfEditor();
     if (state.ocrWorkerTimer) { clearTimeout(state.ocrWorkerTimer); state.ocrWorkerTimer = null; }
     const worker = state.ocrWorker; state.ocrWorker = null;
     if (worker?.terminate) { try { worker.terminate(); } catch {} }
@@ -208,16 +222,9 @@
   function bindScanner() {
     els.cameraBtn.addEventListener('click', () => els.cameraInput.click());
     els.galleryBtn.addEventListener('click', () => els.galleryInput.click());
-    els.pdfEditBtn.addEventListener('click', () => els.pdfEditInput.click());
 
     els.cameraInput.addEventListener('change', onImageInput);
     els.galleryInput.addEventListener('change', onImageInput);
-    els.pdfEditInput.addEventListener('change', async e => {
-      const file = e.target.files?.[0]; e.target.value = '';
-      if (!file) return;
-      try { await importPdfToEditor(file); } catch (err) { handleError(err, 'PDF를 편집기로 불러오지 못했습니다.'); }
-    });
-
     els.clearPagesBtn.addEventListener('click', () => {
       cleanupPages(state.pages); state.pages = []; renderPages(); showToast('페이지를 모두 삭제했습니다.');
     });
@@ -251,7 +258,7 @@
       state.busy = true;
       try {
         await ensureOcrData(state.pages, 0, 100, 'OCR 실행');
-        els.ocrTextArea.value = state.pages.map((p, i) => `--- ${i + 1}페이지 ---\n${p.ocr?.text || ''}`).join('\n\n');
+        els.ocrTextArea.value = state.pages.map((p, i) => `--- ${i + 1}페이지 ---\n${p.ocr?.editedText ?? p.ocr?.text ?? ''}`).join('\n\n');
         renderPages(); hideProgress(); openSheet(els.ocrSheet);
       } catch (err) { handleError(err, 'OCR 처리에 실패했습니다.'); }
       finally { state.busy = false; hideProgress(); }
@@ -281,15 +288,76 @@
   function bindOcrPreference() {
     if (!els.ocrToggle) return;
     let enabled = false;
-    try { enabled = localStorage.getItem(OCR_ENABLED_KEY) === '1'; } catch {}
+    let langs = ['kor','eng'];
+    try {
+      enabled = localStorage.getItem(OCR_ENABLED_KEY) === '1';
+      const raw = localStorage.getItem(OCR_LANG_KEY);
+      if (raw) {
+        const parsed = raw.split(',').filter(v => ['kor','eng','chi_tra'].includes(v));
+        if (parsed.length) langs = parsed;
+      }
+    } catch {}
     els.ocrToggle.checked = enabled;
+    els.ocrLangKor.checked = langs.includes('kor');
+    els.ocrLangEng.checked = langs.includes('eng');
+    els.ocrLangChi.checked = langs.includes('chi_tra');
     updateOcrUi();
     els.ocrToggle.addEventListener('change', () => {
       try { localStorage.setItem(OCR_ENABLED_KEY, els.ocrToggle.checked ? '1' : '0'); } catch {}
       updateOcrUi();
       renderPages();
-      if (els.ocrToggle.checked) showToast('OCR을 켰습니다. 필요할 때만 OCR 엔진을 불러옵니다.');
+      if (els.ocrToggle.checked) showToast('OCR을 켰습니다. 선택한 언어만 필요할 때 불러옵니다.');
     });
+    [els.ocrLangKor, els.ocrLangEng, els.ocrLangChi].forEach(input => input?.addEventListener('change', async e => {
+      if (!getSelectedOcrLanguages().length) {
+        e.target.checked = true;
+        return showToast('OCR 언어를 하나 이상 선택해 주세요.');
+      }
+      try {
+        localStorage.setItem(OCR_LANG_KEY, getSelectedOcrLanguages().join(','));
+        localStorage.removeItem(OFFLINE_READY_KEY);
+      } catch {}
+      invalidateAllOcr();
+      await resetOcrWorker();
+      updateOcrUi();
+      updateOfflinePrepStatus();
+      renderPages();
+    }));
+  }
+
+  function getSelectedOcrLanguages() {
+    const out = [];
+    if (els.ocrLangKor?.checked) out.push('kor');
+    if (els.ocrLangEng?.checked) out.push('eng');
+    if (els.ocrLangChi?.checked) out.push('chi_tra');
+    return out;
+  }
+
+  function getSelectedOcrLanguageAssets() {
+    const langs = getSelectedOcrLanguages();
+    const out = [];
+    if (langs.includes('kor')) out.push(SOURCES.kor);
+    if (langs.includes('eng')) out.push(SOURCES.eng);
+    if (langs.includes('chi_tra')) out.push(SOURCES.chiTra);
+    return out;
+  }
+
+  function ocrLanguageLabel() {
+    return getSelectedOcrLanguages().map(v => v === 'kor' ? 'KOR' : v === 'eng' ? 'ENG' : 'CHI').join(' + ');
+  }
+
+  async function resetOcrWorker() {
+    if (state.ocrWorkerTimer) { clearTimeout(state.ocrWorkerTimer); state.ocrWorkerTimer = null; }
+    const worker = state.ocrWorker;
+    state.ocrWorker = null;
+    state.ocrWorkerLangKey = '';
+    state.ocrAssetsPromise = null;
+    state.ocrAssetsKey = '';
+    if (worker?.terminate) { try { await worker.terminate(); } catch {} }
+  }
+
+  function invalidateAllOcr() {
+    state.pages.forEach(invalidateOcr);
   }
 
   function updateOcrUi() {
@@ -301,52 +369,403 @@
     }
     if (!enabled && els.exportFormat?.value === 'searchable-pdf') els.exportFormat.value = 'pdf';
     if (els.ocrPreviewBtn) els.ocrPreviewBtn.disabled = !enabled || state.pages.length === 0;
+    if (els.ocrLangRow) els.ocrLangRow.classList.toggle('disabled', !enabled);
+    if (els.ocrLangSummary) els.ocrLangSummary.textContent = ocrLanguageLabel() || '선택 필요';
     updateEstimatedSize();
   }
 
-  function bindConverter() {
-    els.pdfToImageBtn.addEventListener('click', () => els.pdfInput.click());
-    els.pdfInput.addEventListener('change', async e => {
+  function updatePdfPageSizeUi() {
+    if (!els.pdfPageSize) return;
+    const isPdf = ['pdf','searchable-pdf'].includes(els.exportFormat?.value);
+    els.pdfPageSize.disabled = !isPdf;
+    els.pdfPageSize.closest('.field-group')?.classList.toggle('field-disabled', !isPdf);
+  }
+
+  function bindPdfPageSize() {
+    if (!els.pdfPageSize) return;
+    let value = 'fit';
+    try { value = localStorage.getItem(PDF_PAGE_SIZE_KEY) || 'fit'; } catch {}
+    if (!['fit','a4','a3'].includes(value)) value = 'fit';
+    els.pdfPageSize.value = value;
+    updatePdfPageSizeUi();
+    els.pdfPageSize.addEventListener('change', () => {
+      try { localStorage.setItem(PDF_PAGE_SIZE_KEY, els.pdfPageSize.value); } catch {}
+      updateEstimatedSize();
+    });
+  }
+
+  function bindPdfEditor() {
+    els.pdfEditorAddBtn?.addEventListener('click', () => els.pdfEditorInput.click());
+    els.pdfEditorInput?.addEventListener('change', async e => {
+      const files = [...(e.target.files || [])]; e.target.value = '';
+      if (!files.length || state.busy) return;
+      try { await addPdfFilesToEditor(files); }
+      catch (err) { handleError(err, 'PDF를 편집기에 추가하지 못했습니다.'); }
+    });
+
+    els.pdfEditorPages?.addEventListener('change', e => {
+      const card = e.target.closest('[data-editor-page-id]');
+      const page = state.pdfEditor.pages.find(p => p.id === card?.dataset.editorPageId);
+      if (!page) return;
+      if (e.target.matches('[data-editor-select]')) {
+        page.selected = !!e.target.checked;
+        renderPdfEditor();
+      } else if (e.target.matches('[data-editor-order]')) {
+        movePdfEditorPage(page.id, e.target.value);
+      }
+    });
+    els.pdfEditorPages?.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-editor-action]');
+      if (!btn || state.busy) return;
+      const card = btn.closest('[data-editor-page-id]');
+      const idx = state.pdfEditor.pages.findIndex(p => p.id === card?.dataset.editorPageId);
+      if (idx < 0) return;
+      if (btn.dataset.editorAction === 'delete') {
+        revokeEditorPage(state.pdfEditor.pages[idx]);
+        state.pdfEditor.pages.splice(idx, 1);
+        prunePdfEditorDocs();
+        renderPdfEditor();
+      }
+    });
+
+    els.pdfSelectAllBtn?.addEventListener('click', () => {
+      const all = state.pdfEditor.pages.length > 0 && state.pdfEditor.pages.every(p => p.selected);
+      state.pdfEditor.pages.forEach(p => p.selected = !all);
+      renderPdfEditor();
+    });
+    els.pdfDeleteBtn?.addEventListener('click', () => {
+      const keep = [];
+      for (const page of state.pdfEditor.pages) {
+        if (page.selected) revokeEditorPage(page); else keep.push(page);
+      }
+      state.pdfEditor.pages = keep;
+      prunePdfEditorDocs();
+      renderPdfEditor();
+    });
+    els.pdfClearBtn?.addEventListener('click', () => { cleanupPdfEditor(); renderPdfEditor(); });
+    els.pdfExtractBtn?.addEventListener('click', async () => {
+      const selected = state.pdfEditor.pages.filter(p => p.selected);
+      if (!selected.length || state.busy) return;
+      try {
+        state.busy = true;
+        showProgress('PDF 추출', '선택한 페이지를 원본 구조로 복사하고 있습니다.', 5);
+        const bytes = await buildPdfEditorBytes(selected, p => updateProgress(10 + p * 82, '선택 페이지 추출 중'));
+        setLatestOutput({ blob: new Blob([bytes], { type: 'application/pdf' }), name: `${kstDateString()}_선택페이지.pdf` });
+      } catch (err) { handleError(err, '선택 페이지를 추출하지 못했습니다.'); }
+      finally { state.busy = false; hideProgress(); }
+    });
+    els.pdfOcrTextBtn?.addEventListener('click', async () => {
+      const selected = state.pdfEditor.pages.filter(p => p.selected);
+      if (!selected.length || state.busy) return;
+      try {
+        state.busy = true;
+        showProgress('OCR 텍스트 읽기', '선택한 PDF의 검색 텍스트를 읽고 있습니다.', 0);
+        const chunks = [];
+        for (let i = 0; i < selected.length; i++) {
+          const page = selected[i];
+          const text = page.ocrTextOverride != null ? page.ocrTextOverride : await extractPdfPageText(page);
+          chunks.push(`--- ${i + 1}선택 · 편집 ${state.pdfEditor.pages.indexOf(page) + 1}페이지 ---\n${text}`);
+          updateProgress(((i + 1) / selected.length) * 100, `${i + 1} / ${selected.length} 페이지 텍스트 읽기`);
+        }
+        state.pdfEditor.ocrEditPageIds = selected.map(p => p.id);
+        els.pdfOcrTextArea.value = chunks.join('\n\n');
+        hideProgress(); openSheet(els.pdfOcrSheet);
+      } catch (err) { handleError(err, 'PDF OCR 텍스트를 읽지 못했습니다.'); }
+      finally { state.busy = false; hideProgress(); }
+    });
+
+    els.pdfMergeSaveBtn?.addEventListener('click', async () => {
+      if (!state.pdfEditor.pages.length || state.busy) return;
+      try {
+        state.busy = true;
+        showProgress('PDF 저장', '현재 순서대로 페이지를 합치고 있습니다.', 5);
+        const bytes = await buildPdfEditorBytes(state.pdfEditor.pages, p => updateProgress(10 + p * 82, 'PDF 페이지 복사 중'));
+        setLatestOutput({ blob: new Blob([bytes], { type: 'application/pdf' }), name: `${kstDateString()}_PDF편집.pdf` });
+      } catch (err) { handleError(err, 'PDF를 저장하지 못했습니다.'); }
+      finally { state.busy = false; hideProgress(); }
+    });
+    els.pdfSplitBtn?.addEventListener('click', async () => {
+      if (!state.pdfEditor.pages.length || state.busy) return;
+      try {
+        const groups = parsePdfSplitRanges(els.pdfSplitRanges.value, state.pdfEditor.pages.length);
+        if (!groups.length) return showToast('나눌 범위를 입력해 주세요. 예: 1-3, 4-6');
+        state.busy = true;
+        showProgress('PDF 나누기', '범위별 PDF를 만들고 있습니다.', 2);
+        const outputs = [];
+        for (let i = 0; i < groups.length; i++) {
+          const entries = groups[i].map(n => state.pdfEditor.pages[n - 1]).filter(Boolean);
+          const bytes = await buildPdfEditorBytes(entries, p => updateProgress(((i + p) / groups.length) * 88, `${i + 1} / ${groups.length} PDF 생성`));
+          outputs.push({ bytes, label: groups[i].length === 1 ? `${groups[i][0]}` : `${groups[i][0]}-${groups[i][groups[i].length - 1]}` });
+        }
+        if (outputs.length === 1) {
+          setLatestOutput({ blob: new Blob([outputs[0].bytes], { type: 'application/pdf' }), name: `${kstDateString()}_분할_${outputs[0].label}.pdf` });
+        } else {
+          if (!window.JSZip) throw new Error('ZIP 라이브러리를 불러오지 못했습니다.');
+          const zip = new window.JSZip();
+          outputs.forEach((o, i) => zip.file(`${kstDateString()}_분할_${String(i + 1).padStart(2, '0')}_${o.label}.pdf`, o.bytes));
+          updateProgress(94, '분할 PDF를 ZIP으로 묶고 있습니다.');
+          const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 3 } });
+          setLatestOutput({ blob, name: `${kstDateString()}_PDF분할.zip` });
+        }
+      } catch (err) { handleError(err, 'PDF를 나누지 못했습니다.'); }
+      finally { state.busy = false; hideProgress(); }
+    });
+
+    els.pdfToImageBtn?.addEventListener('click', () => els.pdfInput.click());
+    els.pdfInput?.addEventListener('change', async e => {
       const file = e.target.files?.[0]; e.target.value = '';
       if (!file) return;
       try { setLatestOutput(await convertPdfToImages(file, els.pdfImageFormat.value)); }
       catch (err) { handleError(err, 'PDF를 이미지로 변환하지 못했습니다. 암호 PDF이거나 지원하지 않는 파일일 수 있습니다.'); }
     });
 
-    els.imagesToPdfBtn.addEventListener('click', () => els.imagesForPdfInput.click());
-    els.imagesForPdfInput.addEventListener('change', async e => {
-      const files = [...(e.target.files || [])]; e.target.value = '';
-      if (!files.length) return;
-      const temp = [];
-      try {
-        await validateImageBatch(files, 0);
-        showProgress('이미지 준비', 'PDF에 넣을 이미지를 준비하고 있습니다.', 0);
-        for (let i = 0; i < files.length; i++) {
-          const blob = await normalizeImageFile(files[i], IMPORT_MAX, 0.95);
-          const page = makePage(blob, files[i].name, blob);
-          await refreshPreview(page); temp.push(page);
-          updateProgress((i + 1) / files.length * 30, `${i + 1} / ${files.length} 이미지 준비`);
-        }
-        const base = sanitizeFileName(stripExtension(files[0].name) || `${kstDateString()}_이미지`);
-        const searchable = els.imagePdfMode.value === 'searchable-pdf';
-        setLatestOutput(await createPdfFromPages(temp, base, searchable, 30));
-      } catch (err) { handleError(err, '이미지를 PDF로 변환하지 못했습니다.'); }
-      finally { cleanupPages(temp); }
+    bindPdfEditorDrag();
+    renderPdfEditor();
+  }
+
+  async function addPdfFilesToEditor(files) {
+    const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
+    if (totalBytes > LIMITS.batchBytes) throw new Error('한 번에 추가한 PDF 총 용량이 200 MB를 초과합니다.');
+    for (const file of files) await validatePdfFile(file);
+    state.busy = true;
+    let added = 0;
+    try {
+      showProgress('PDF 편집 준비', '페이지 정보를 안전하게 읽고 있습니다.', 0);
+      const pdfjs = await getPdfJs();
+      for (let fi = 0; fi < files.length; fi++) {
+        const file = files[fi];
+        const raw = new Uint8Array(await file.arrayBuffer());
+        const sourceId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+        let pdf = null;
+        try {
+          pdf = await loadPdfDocument(pdfjs, raw.slice());
+          if (state.pdfEditor.pages.length + pdf.numPages > LIMITS.pages) throw new Error(`PDF 편집은 최대 ${LIMITS.pages}페이지까지 지원합니다.`);
+          state.pdfEditor.docs.set(sourceId, { id: sourceId, name: file.name, bytes: raw });
+          for (let n = 1; n <= pdf.numPages; n++) {
+            updateProgress(((fi + (n - 1) / pdf.numPages) / files.length) * 92, `${file.name} · ${n} / ${pdf.numPages} 페이지`);
+            const page = await pdf.getPage(n);
+            const viewport = safePdfViewport(page, 0.65, 520);
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.ceil(viewport.width)); canvas.height = Math.max(1, Math.ceil(viewport.height));
+            const ctx = canvas.getContext('2d', { alpha: false }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            await renderPdfPageSafely(page, ctx, viewport);
+            const thumb = await canvasToBlob(canvas, 'image/jpeg', 0.78); releaseCanvas(canvas); page.cleanup?.();
+            state.pdfEditor.pages.push({
+              id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+              sourceId, pageIndex: n - 1, sourceName: file.name, originalPage: n,
+              previewUrl: URL.createObjectURL(thumb), selected: false,
+            });
+            added++;
+          }
+        } finally { try { pdf?.cleanup?.(); await pdf?.destroy?.(); } catch {} }
+      }
+      renderPdfEditor();
+      updateProgress(100, 'PDF 편집 준비 완료');
+      showToast(`${added}페이지를 PDF 편집기에 추가했습니다.`);
+    } finally { state.busy = false; hideProgress(); }
+  }
+
+  function renderPdfEditor() {
+    if (!els.pdfEditorPages) return;
+    const pages = state.pdfEditor.pages;
+    const selected = pages.filter(p => p.selected).length;
+    els.pdfEditorCount.textContent = pages.length ? `${pages.length}페이지 · ${selected}개 선택` : 'PDF를 추가해 주세요.';
+    els.pdfEditorEmpty.classList.toggle('hidden', pages.length > 0);
+    [els.pdfSelectAllBtn, els.pdfClearBtn, els.pdfMergeSaveBtn, els.pdfSplitBtn].forEach(b => { if (b) b.disabled = pages.length === 0; });
+    [els.pdfExtractBtn, els.pdfOcrTextBtn, els.pdfDeleteBtn].forEach(b => { if (b) b.disabled = selected === 0; });
+    if (els.pdfSelectAllBtn) els.pdfSelectAllBtn.textContent = pages.length && selected === pages.length ? '선택 해제' : '전체 선택';
+    els.pdfEditorPages.innerHTML = pages.map((page, idx) => `
+      <article class="pdf-page-card ${page.selected ? 'selected' : ''}" data-editor-page-id="${escapeHtml(page.id)}">
+        <label class="pdf-page-check"><input type="checkbox" data-editor-select ${page.selected ? 'checked' : ''} /><span>${idx + 1}</span></label>
+        <div class="pdf-thumb-drag" data-editor-sort-handle><img src="${escapeHtml(page.previewUrl)}" alt="${idx + 1}페이지" /></div>
+        <div class="pdf-page-meta"><strong>${idx + 1}페이지${page.ocrTextOverride != null ? ' · OCR 수정됨' : ''}</strong><span>${escapeHtml(page.sourceName)} · 원본 ${page.originalPage}p</span></div>
+        <label class="pdf-order-field"><span>순서</span><input type="number" data-editor-order min="1" max="${pages.length}" value="${idx + 1}" inputmode="numeric" /></label>
+        <button class="pdf-page-delete" data-editor-action="delete">삭제</button>
+      </article>`).join('');
+  }
+
+  function movePdfEditorPage(pageId, targetOneBased) {
+    const pages = state.pdfEditor.pages;
+    const from = pages.findIndex(p => p.id === pageId);
+    if (from < 0) return;
+    const target = clamp(Math.round(Number(targetOneBased) || 1), 1, pages.length) - 1;
+    if (target === from) return;
+    const [page] = pages.splice(from, 1); pages.splice(target, 0, page); renderPdfEditor();
+  }
+
+  function bindPdfEditorDrag() {
+    const host = els.pdfEditorPages;
+    if (!host) return;
+    host.addEventListener('pointerdown', e => {
+      const handle = e.target.closest('[data-editor-sort-handle]');
+      if (!handle || state.busy) return;
+      const card = handle.closest('.pdf-page-card'); if (!card) return;
+      e.preventDefault(); state.pdfEditor.drag = { card, pointerId: e.pointerId }; card.classList.add('dragging');
+      try { handle.setPointerCapture(e.pointerId); } catch {}
     });
+    window.addEventListener('pointermove', e => {
+      const d = state.pdfEditor.drag; if (!d || e.pointerId !== d.pointerId) return;
+      e.preventDefault();
+      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.pdf-page-card');
+      if (!target || target === d.card || target.parentNode !== host) return;
+      const rect = target.getBoundingClientRect();
+      host.insertBefore(d.card, e.clientY < rect.top + rect.height / 2 ? target : target.nextSibling);
+    }, { passive: false });
+    const finish = e => {
+      const d = state.pdfEditor.drag; if (!d || (e.pointerId != null && e.pointerId !== d.pointerId)) return;
+      d.card.classList.remove('dragging');
+      const ids = [...host.querySelectorAll('.pdf-page-card')].map(el => el.dataset.editorPageId);
+      const byId = new Map(state.pdfEditor.pages.map(p => [p.id, p]));
+      state.pdfEditor.pages = ids.map(id => byId.get(id)).filter(Boolean);
+      state.pdfEditor.drag = null; renderPdfEditor();
+    };
+    window.addEventListener('pointerup', finish); window.addEventListener('pointercancel', finish);
+  }
+
+  async function ensurePdfLib() {
+    if (window.PDFLib?.PDFDocument) return window.PDFLib;
+    if (state.pdfLibPromise) return state.pdfLibPromise;
+    state.pdfLibPromise = (async () => {
+      const rt = window.ScanBoxRuntime; if (!rt) throw new Error('보안 런타임을 불러오지 못했습니다.');
+      await rt.loadScript({ ...SOURCES.pdfLib, globalCheck: () => !!window.PDFLib?.PDFDocument });
+      return window.PDFLib;
+    })().catch(err => { state.pdfLibPromise = null; throw err; });
+    return state.pdfLibPromise;
+  }
+
+  async function buildPdfEditorBytes(entries, onProgress) {
+    if (!entries.length) throw new Error('저장할 PDF 페이지가 없습니다.');
+    const lib = await ensurePdfLib();
+    const out = await lib.PDFDocument.create();
+    const loaded = new Map();
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const source = state.pdfEditor.docs.get(entry.sourceId);
+      if (!source) throw new Error('PDF 원본 페이지 정보를 찾지 못했습니다.');
+      let src = loaded.get(entry.sourceId);
+      if (!src) {
+        src = await lib.PDFDocument.load(source.bytes.slice(), { ignoreEncryption: false, updateMetadata: false });
+        loaded.set(entry.sourceId, src);
+      }
+      if (entry.ocrTextOverride != null) {
+        const rebuiltBytes = await rebuildPdfEditorPageWithOcr(entry);
+        const rebuilt = await lib.PDFDocument.load(rebuiltBytes, { ignoreEncryption: false });
+        const [copied] = await out.copyPages(rebuilt, [0]);
+        out.addPage(copied);
+      } else {
+        const [copied] = await out.copyPages(src, [entry.pageIndex]);
+        out.addPage(copied);
+      }
+      onProgress?.((i + 1) / entries.length);
+    }
+    return await out.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
+  }
+
+  async function extractPdfPageText(entry) {
+    const source = state.pdfEditor.docs.get(entry.sourceId);
+    if (!source) throw new Error('PDF 원본을 찾지 못했습니다.');
+    const pdfjs = await getPdfJs();
+    let pdf = null;
+    try {
+      pdf = await loadPdfDocument(pdfjs, source.bytes.slice());
+      const page = await pdf.getPage(entry.pageIndex + 1);
+      const content = await page.getTextContent({ disableNormalization: false });
+      page.cleanup?.();
+      return (content.items || []).map(item => String(item.str || '')).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    } finally { try { pdf?.cleanup?.(); await pdf?.destroy?.(); } catch {} }
+  }
+
+  function applyPdfOcrTextEdits() {
+    const ids = state.pdfEditor.ocrEditPageIds || [];
+    const raw = String(els.pdfOcrTextArea?.value || '');
+    const re = /^---\s*(\d+)선택\s*·\s*편집\s*(\d+)페이지\s*---\s*$/gm;
+    const marks = []; let m;
+    while ((m = re.exec(raw))) marks.push({ selection: Number(m[1]), start: re.lastIndex, markerStart: m.index });
+    if (!marks.length) return showToast('페이지 구분 표시를 찾지 못했습니다.');
+    for (let i = 0; i < marks.length; i++) {
+      const id = ids[marks[i].selection - 1];
+      const page = state.pdfEditor.pages.find(p => p.id === id);
+      if (!page) continue;
+      const end = i + 1 < marks.length ? marks[i + 1].markerStart : raw.length;
+      page.ocrTextOverride = raw.slice(marks[i].start, end).trim();
+    }
+    closeSheet(els.pdfOcrSheet); renderPdfEditor(); showToast('선택한 페이지의 OCR 검색 텍스트 수정을 저장했습니다.');
+  }
+
+  async function rebuildPdfEditorPageWithOcr(entry) {
+    const source = state.pdfEditor.docs.get(entry.sourceId);
+    if (!source) throw new Error('PDF 원본을 찾지 못했습니다.');
+    const pdfjs = await getPdfJs();
+    let pdf = null;
+    try {
+      pdf = await loadPdfDocument(pdfjs, source.bytes.slice());
+      const page = await pdf.getPage(entry.pageIndex + 1);
+      const viewport = safePdfViewport(page, 2.25, 4200);
+      const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext('2d', { alpha: false }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await renderPdfPageSafely(page, ctx, viewport);
+      const jpeg = await canvasToBlob(canvas, 'image/jpeg', 0.94); const jpegBytes = new Uint8Array(await jpeg.arrayBuffer());
+      const bytes = window.ScanBoxPDF.build({ pages: [{ jpegBytes, width: canvas.width, height: canvas.height, ocrWords: [], ocrTextOverride: entry.ocrTextOverride }], title: 'ScanBox OCR edit', searchable: true, pageSize: 'fit' });
+      releaseCanvas(canvas); page.cleanup?.(); return bytes;
+    } finally { try { pdf?.cleanup?.(); await pdf?.destroy?.(); } catch {} }
+  }
+
+  function parsePdfSplitRanges(text, total) {
+    const groups = [];
+    for (const part of String(text || '').split(',').map(v => v.trim()).filter(Boolean)) {
+      const m = part.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+      if (!m) throw new Error(`범위 형식이 올바르지 않습니다: ${part}`);
+      let a = Number(m[1]), b = Number(m[2] || m[1]);
+      if (a < 1 || b < 1 || a > total || b > total) throw new Error(`페이지 범위는 1 ~ ${total} 사이여야 합니다.`);
+      if (a > b) [a, b] = [b, a];
+      groups.push(Array.from({ length: b - a + 1 }, (_, i) => a + i));
+    }
+    return groups;
+  }
+
+  function revokeEditorPage(page) { if (page?.previewUrl) { try { URL.revokeObjectURL(page.previewUrl); } catch {} } }
+  function prunePdfEditorDocs() {
+    const used = new Set(state.pdfEditor.pages.map(p => p.sourceId));
+    for (const id of state.pdfEditor.docs.keys()) if (!used.has(id)) state.pdfEditor.docs.delete(id);
+  }
+  function cleanupPdfEditor() {
+    if (!state.pdfEditor) return;
+    state.pdfEditor.pages.forEach(revokeEditorPage);
+    state.pdfEditor.pages = []; state.pdfEditor.docs.clear(); state.pdfEditor.drag = null; state.pdfEditor.ocrEditPageIds = [];
   }
 
   function bindSheets() {
     $$('[data-close-output]').forEach(el => el.addEventListener('click', () => closeSheet(els.outputSheet)));
     $$('[data-close-ocr]').forEach(el => el.addEventListener('click', () => closeSheet(els.ocrSheet)));
     $$('[data-close-about]').forEach(el => el.addEventListener('click', () => closeSheet(els.aboutSheet)));
+    $$('[data-close-pdf-ocr]').forEach(el => el.addEventListener('click', () => closeSheet(els.pdfOcrSheet)));
+    els.applyPdfOcrTextBtn?.addEventListener('click', applyPdfOcrTextEdits);
     $$('[data-close-crop]').forEach(el => el.addEventListener('click', closeCropEditor));
     els.saveOutputBtn.addEventListener('click', () => state.latestOutput && downloadBlob(state.latestOutput.blob, state.latestOutput.name));
     els.shareOutputBtn.addEventListener('click', () => state.latestOutput && shareBlob(state.latestOutput.blob, state.latestOutput.name));
+    els.applyOcrTextBtn?.addEventListener('click', applyOcrTextEdits);
     els.copyOcrBtn.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(els.ocrTextArea.value); }
       catch { els.ocrTextArea.select(); document.execCommand('copy'); }
       showToast('OCR 텍스트를 복사했습니다.');
     });
+  }
+
+  function applyOcrTextEdits() {
+    const raw = String(els.ocrTextArea?.value || '');
+    const re = /^---\s*(\d+)페이지\s*---\s*$/gm;
+    const marks = [];
+    let m;
+    while ((m = re.exec(raw))) marks.push({ page: Number(m[1]), start: re.lastIndex, markerStart: m.index });
+    if (!marks.length) return showToast('페이지 구분 표시를 찾지 못했습니다.');
+    for (let i = 0; i < marks.length; i++) {
+      const page = state.pages[marks[i].page - 1];
+      if (!page?.ocr) continue;
+      const end = i + 1 < marks.length ? marks[i + 1].markerStart : raw.length;
+      page.ocr.editedText = raw.slice(marks[i].start, end).trim();
+    }
+    renderPages();
+    showToast('OCR 수정 내용을 검색 PDF에 반영하도록 저장했습니다.');
   }
 
   function bindTheme() {
@@ -446,11 +865,12 @@
     if (!rt) {
       essentialFailures++;
     } else {
-      for (let i = 0; i < ESSENTIAL_RUNTIME_ASSETS.length; i++) {
-        const item = ESSENTIAL_RUNTIME_ASSETS[i];
+      const essentialAssets = [...ESSENTIAL_RUNTIME_ASSETS, ...getSelectedOcrLanguageAssets()];
+      for (let i = 0; i < essentialAssets.length; i++) {
+        const item = essentialAssets[i];
         try {
-          const base = 20 + (i / ESSENTIAL_RUNTIME_ASSETS.length) * 54;
-          const span = 54 / ESSENTIAL_RUNTIME_ASSETS.length;
+          const base = 20 + (i / essentialAssets.length) * 54;
+          const span = 54 / essentialAssets.length;
           await rt.ensureAsset({ ...item, onProgress: p => updateProgress(base + span * (p || 0), `${item.name} 지문 생성 · 저장 중`) });
         } catch (err) {
           essentialFailures++;
@@ -473,19 +893,21 @@
     }
 
     try {
-      updateProgress(82, '한국어 · 영어 OCR 모델 초기화 중');
+      updateProgress(82, `${ocrLanguageLabel()} OCR 모델 초기화 중`);
       const worker = await getOcrWorker(m => {
         if (m.status === 'loading language traineddata') updateProgress(82 + (m.progress || 0) * 10, 'OCR 언어 모델 준비 중');
       });
       if (state.ocrWorkerTimer) { clearTimeout(state.ocrWorkerTimer); state.ocrWorkerTimer = null; }
       try { await worker.terminate(); } catch {}
       state.ocrWorker = null;
+      state.ocrWorkerLangKey = '';
     } catch (err) { essentialFailures++; console.warn('OCR warm failed', err); }
 
     try {
       updateProgress(94, 'PDF 안전 렌더링 엔진 확인 중');
       await getPdfJs();
-    } catch (err) { essentialFailures++; console.warn('PDF.js warm failed', err); }
+      await ensurePdfLib();
+    } catch (err) { essentialFailures++; console.warn('PDF engine warm failed', err); }
 
     const ready = essentialFailures === 0;
     updateProgress(100, ready ? '보안 · 오프라인 준비 완료' : '준비 완료 · 일부 필수 항목 확인 필요');
@@ -722,9 +1144,24 @@
     const count = state.pages.length;
     els.pageCount.textContent = `${count}장`;
     els.emptyPages.classList.toggle('hidden', count > 0);
+    els.pageThumbSection?.classList.toggle('hidden', count === 0);
     els.clearPagesBtn.disabled = count === 0;
     els.ocrPreviewBtn.disabled = count === 0 || !els.ocrToggle?.checked;
     els.createOutputBtn.disabled = count === 0;
+
+    if (els.pageThumbList) {
+      els.pageThumbList.innerHTML = state.pages.map((page, idx) => `
+        <article class="page-thumb-card" data-page-id="${escapeHtml(page.id)}">
+          <div class="thumb-drag-zone" data-thumb-sort-handle title="끌어서 순서 이동">
+            <img src="${escapeHtml(page.previewUrl || '')}" alt="${idx + 1}페이지 썸네일" />
+            <span class="thumb-number">${idx + 1}</span>
+          </div>
+          <div class="thumb-controls">
+            <label><span>순서</span><input class="page-order-input" data-page-order type="number" min="1" max="${count}" value="${idx + 1}" inputmode="numeric" /></label>
+            <button data-thumb-delete class="thumb-delete" aria-label="${idx + 1}페이지 삭제">삭제</button>
+          </div>
+        </article>`).join('');
+    }
 
     els.pageList.innerHTML = state.pages.map((page, idx) => `
       <article class="page-card" data-page-id="${escapeHtml(page.id)}">
@@ -735,7 +1172,7 @@
             <strong>${idx + 1}페이지</strong>
             <span class="page-source">${escapeHtml(page.sourceName || '')}</span>
           </div>
-          ${page.ocr ? `<span class="ocr-chip">OCR ${page.ocr.words.length.toLocaleString()}단어</span>` : ''}
+          ${page.ocr ? `<span class="ocr-chip">OCR ${page.ocr.words.length.toLocaleString()}단어${page.ocr.editedText != null ? ' · 수정됨' : ''}</span>` : ''}
           <div class="filter-tabs">
             ${filterButton(page, 'color', '컬러')}${filterButton(page, 'auto', '자동')}${filterButton(page, 'gray', '그레이')}${filterButton(page, 'document', '문서')}${filterButton(page, 'bw', '흑백')}
           </div>
@@ -758,12 +1195,12 @@
       const card = handle.closest('.page-card');
       if (!card) return;
       e.preventDefault();
-      state.drag = { card, pointerId: e.pointerId };
+      state.drag = { card, pointerId: e.pointerId, mode: 'card' };
       card.classList.add('dragging');
       try { handle.setPointerCapture(e.pointerId); } catch {}
     });
     window.addEventListener('pointermove', e => {
-      if (!state.drag || e.pointerId !== state.drag.pointerId) return;
+      if (!state.drag || state.drag.mode !== 'card' || e.pointerId !== state.drag.pointerId) return;
       e.preventDefault();
       const { card } = state.drag;
       card.style.transform = `scale(1.015) translateY(${Math.max(-12, Math.min(12, e.movementY || 0))}px)`;
@@ -778,13 +1215,75 @@
   }
 
   function endDrag(e) {
-    if (!state.drag || (e.pointerId != null && e.pointerId !== state.drag.pointerId)) return;
+    if (!state.drag || state.drag.mode !== 'card' || (e.pointerId != null && e.pointerId !== state.drag.pointerId)) return;
     const { card } = state.drag;
     card.classList.remove('dragging'); card.style.transform = '';
     const ids = [...els.pageList.querySelectorAll('.page-card')].map(el => el.dataset.pageId);
     const byId = new Map(state.pages.map(p => [p.id, p]));
     state.pages = ids.map(id => byId.get(id)).filter(Boolean);
     state.drag = null; renderPages();
+  }
+
+  function moveScannerPage(pageId, oneBasedTarget) {
+    const from = state.pages.findIndex(p => p.id === pageId);
+    if (from < 0) return;
+    const target = clamp(Math.round(Number(oneBasedTarget) || 1), 1, state.pages.length) - 1;
+    if (from === target) return;
+    const [page] = state.pages.splice(from, 1);
+    state.pages.splice(target, 0, page);
+    renderPages();
+  }
+
+  function bindThumbDrag() {
+    if (!els.pageThumbList) return;
+    els.pageThumbList.addEventListener('change', e => {
+      const input = e.target.closest('[data-page-order]');
+      if (!input || state.busy || state.drag) return;
+      const card = input.closest('[data-page-id]');
+      moveScannerPage(card?.dataset.pageId, input.value);
+    });
+    els.pageThumbList.addEventListener('click', e => {
+      const btn = e.target.closest('[data-thumb-delete]');
+      if (!btn || state.busy || state.drag) return;
+      const card = btn.closest('[data-page-id]');
+      const idx = state.pages.findIndex(p => p.id === card?.dataset.pageId);
+      if (idx < 0) return;
+      revokePageUrls(state.pages[idx]);
+      state.pages.splice(idx, 1);
+      renderPages();
+    });
+    els.pageThumbList.addEventListener('pointerdown', e => {
+      const handle = e.target.closest('[data-thumb-sort-handle]');
+      if (!handle || state.busy) return;
+      const card = handle.closest('.page-thumb-card');
+      if (!card) return;
+      e.preventDefault();
+      state.drag = { card, pointerId: e.pointerId, mode: 'thumb' };
+      card.classList.add('dragging');
+      try { handle.setPointerCapture(e.pointerId); } catch {}
+    });
+    window.addEventListener('pointermove', e => {
+      if (!state.drag || state.drag.mode !== 'thumb' || e.pointerId !== state.drag.pointerId) return;
+      e.preventDefault();
+      const { card } = state.drag;
+      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.page-thumb-card');
+      if (!target || target === card || target.parentNode !== els.pageThumbList) return;
+      const rect = target.getBoundingClientRect();
+      const before = e.clientX < rect.left + rect.width / 2;
+      els.pageThumbList.insertBefore(card, before ? target : target.nextSibling);
+    }, { passive: false });
+    const finish = e => {
+      if (!state.drag || state.drag.mode !== 'thumb' || (e.pointerId != null && e.pointerId !== state.drag.pointerId)) return;
+      const { card } = state.drag;
+      card.classList.remove('dragging');
+      const ids = [...els.pageThumbList.querySelectorAll('.page-thumb-card')].map(el => el.dataset.pageId);
+      const byId = new Map(state.pages.map(p => [p.id, p]));
+      state.pages = ids.map(id => byId.get(id)).filter(Boolean);
+      state.drag = null;
+      renderPages();
+    };
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
   }
 
   async function normalizeImageFile(fileOrBlob, maxDimension, quality = 0.95) {
@@ -1495,7 +1994,7 @@
   }
 
   async function ensureOcrData(pages, startPct=0, endPct=65, title='OCR PDF 만들기') {
-    showProgress(title,'한국어 + 영어 OCR 엔진을 준비하고 있습니다.',startPct);
+    showProgress(title,`${ocrLanguageLabel()} OCR 엔진을 준비하고 있습니다.`,startPct);
     const worker=await getOcrWorker(m=>{if(m.status==='recognizing text'){const base=state._ocrBase??startPct,span=state._ocrSpan??1;updateProgress(base+m.progress*span,'문서의 글자를 인식하고 있습니다.');}});
     const q=getQuality();
     for(let i=0;i<pages.length;i++){
@@ -1548,23 +2047,31 @@
   }
 
   async function ensureOcrRuntimeAssets(onProgress) {
-    if (state.ocrAssetsPromise) return state.ocrAssetsPromise;
+    const langs = getSelectedOcrLanguages();
+    if (!langs.length) throw new Error('OCR 언어를 하나 이상 선택해 주세요.');
+    const key = langs.join('+');
+    if (state.ocrAssetsPromise && state.ocrAssetsKey === key) return state.ocrAssetsPromise;
+    state.ocrAssetsKey = key;
     state.ocrAssetsPromise = (async () => {
       const rt = window.ScanBoxRuntime;
       if (!rt) throw new Error('보안 런타임을 불러오지 못했습니다.');
-      const assets = [SOURCES.tesseractMain, SOURCES.tesseractWorker, ...TESS_CORE_ASSETS, SOURCES.kor, SOURCES.eng];
+      const assets = [SOURCES.tesseractMain, SOURCES.tesseractWorker, ...TESS_CORE_ASSETS, ...getSelectedOcrLanguageAssets()];
       await rt.warmAssets(assets, (p, item) => onProgress?.(p, item));
       await rt.loadScript({ ...SOURCES.tesseractMain, globalCheck: () => !!window.Tesseract });
       if (!window.Tesseract?.createWorker) throw new Error('OCR 라이브러리 초기화에 실패했습니다.');
       return true;
-    })().catch(err => { state.ocrAssetsPromise = null; throw err; });
+    })().catch(err => { state.ocrAssetsPromise = null; state.ocrAssetsKey = ''; throw err; });
     return state.ocrAssetsPromise;
   }
 
   async function getOcrWorker(logger) {
     state.ocrLogger = logger;
     if (state.ocrWorkerTimer) { clearTimeout(state.ocrWorkerTimer); state.ocrWorkerTimer = null; }
-    if (state.ocrWorker) return state.ocrWorker;
+    const langs = getSelectedOcrLanguages();
+    if (!langs.length) throw new Error('OCR 언어를 하나 이상 선택해 주세요.');
+    const langKey = langs.join('+');
+    if (state.ocrWorker && state.ocrWorkerLangKey === langKey) return state.ocrWorker;
+    if (state.ocrWorker) await resetOcrWorker();
     await ensureOcrRuntimeAssets((p, item) => {
       if (state.busy) updateProgress(Math.min(35, 4 + p * 28), `${item?.name || 'OCR 엔진'} 보안 캐시 준비 중`);
     });
@@ -1572,11 +2079,12 @@
     const workerPath = rt.virtualUrl('tesseract/worker.min.js');
     const corePath = rt.virtualUrl('tesseract/core').replace(/\/$/, '');
     const langPath = rt.virtualUrl('tesseract/lang').replace(/\/$/, '');
-    state.ocrWorker = await window.Tesseract.createWorker(['kor','eng'], 1, {
+    state.ocrWorker = await window.Tesseract.createWorker(langs, 1, {
       workerPath, corePath, langPath, gzip: true,
       logger: m => state.ocrLogger?.(m),
       errorHandler: err => console.error('Tesseract worker:', err)
     });
+    state.ocrWorkerLangKey = langKey;
     try { await state.ocrWorker.setParameters({ tessedit_pageseg_mode:'3', preserve_interword_spaces:'1', user_defined_dpi:'300' }); } catch (err) { console.warn('OCR 파라미터 일부 적용 실패:', err); }
     return state.ocrWorker;
   }
@@ -1614,11 +2122,11 @@
           const ocrWords = searchable && pages[i].ocr ? pages[i].ocr.words.slice(0, LIMITS.ocrWords).map(w => ({
             text: w.text, x: w.left * sx, y: w.top * sy, w: w.width * sx, h: w.height * sy
           })) : [];
-          pdfPages.push({ jpegBytes: bytes, width: canvas.width, height: canvas.height, ocrWords });
+          pdfPages.push({ jpegBytes: bytes, width: canvas.width, height: canvas.height, ocrWords, ocrTextOverride: searchable && pages[i].ocr?.editedText != null ? pages[i].ocr.editedText : null });
         } finally { releaseCanvas(canvas); }
       }
       updateProgress(96, 'PDF 구조와 검색 레이어를 저장하고 있습니다.');
-      const pdfBytes = window.ScanBoxPDF.build({ pages: pdfPages, title: baseName, searchable });
+      const pdfBytes = window.ScanBoxPDF.build({ pages: pdfPages, title: baseName, searchable, pageSize: els.pdfPageSize?.value || 'fit' });
       updateProgress(100, 'PDF 완료');
       return { blob: new Blob([pdfBytes], { type: 'application/pdf' }), name: `${baseName}${searchable ? '_OCR' : ''}.pdf` };
     } finally { state.busy = false; hideProgress(); renderPages(); }
@@ -1668,34 +2176,6 @@
     } catch (err) {
       try { task.cancel?.(); } catch {}
       throw err;
-    }
-  }
-
-  async function importPdfToEditor(file){
-    if(state.busy)return;
-    await validatePdfFile(file);
-    state.busy=true;
-    let pdf=null;
-    try{
-      showProgress('PDF 편집 준비','PDF 실행 기능을 끄고 안전 모드로 페이지를 렌더링합니다.',0);
-      const pdfjs=await getPdfJs();
-      pdf=await loadPdfDocument(pdfjs,new Uint8Array(await file.arrayBuffer()));
-      if(pdf.numPages>LIMITS.pages)throw new Error(`PDF 편집은 최대 ${LIMITS.pages}페이지까지 지원합니다.`);
-      if(state.pages.length+pdf.numPages>LIMITS.pages)throw new Error(`현재 페이지와 합쳐 최대 ${LIMITS.pages}페이지까지 처리할 수 있습니다.`);
-      for(let n=1;n<=pdf.numPages;n++){
-        updateProgress(((n-1)/pdf.numPages)*95,`${n} / ${pdf.numPages} 페이지 가져오기`);
-        const page=await pdf.getPage(n);
-        const viewport=safePdfViewport(page,2.2,IMPORT_MAX);
-        const canvas=document.createElement('canvas');canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
-        const ctx=canvas.getContext('2d',{alpha:false});ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
-        await renderPdfPageSafely(page,ctx,viewport);
-        const blob=await canvasToBlob(canvas,'image/jpeg',0.94);releaseCanvas(canvas);
-        const p=makePage(blob,`${file.name} · ${n}p`,blob);await refreshPreview(p);state.pages.push(p);page.cleanup?.();
-      }
-      renderPages();switchTab('scanner');updateProgress(100,'PDF 가져오기 완료');showToast(`${pdf.numPages}개의 편집 페이지가 준비되었습니다.`);
-    }finally{
-      try{pdf?.cleanup?.();pdf?.destroy?.();}catch{}
-      state.busy=false;hideProgress();
     }
   }
 
