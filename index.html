@@ -38,7 +38,7 @@
 
   <main class="app-shell">
     <section class="intro">
-      <p class="kicker">ScanBox 1.1.2</p>
+      <p class="kicker">ScanBox 1.1.3</p>
       <h1>문서는 깔끔하게.<br />저장은 원하는 형식으로.</h1>
       <p>촬영부터 문서 보정, OCR, 검색 PDF와 PDF 편집까지 기기에서 처리합니다. 고정 버전 엔진은 최초 지문을 생성해 앱 캐시에 잠급니다.</p>
     </section>
@@ -73,7 +73,12 @@
         <label class="toggle-line">
           <span><strong>자동 문서 보정</strong><small>테두리를 찾아 정면으로 펴줍니다.</small></span>
           <input id="autoCorrectToggle" type="checkbox" checked />
-          <i></i>
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="toggle-line toggle-divider">
+          <span><strong>OCR</strong><small>글자를 인식해 검색 PDF와 텍스트 확인을 사용합니다.</small></span>
+          <input id="ocrToggle" type="checkbox" />
+          <i aria-hidden="true"></i>
         </label>
         <div class="engine-line">
           <span id="opencvState" class="engine-state">문서 보정 엔진 준비 중</span>
@@ -101,19 +106,17 @@
 
         <div class="field-group filename-field">
           <label for="fileNameInput">파일명</label>
-          <div class="inline-field">
+          <div class="inline-field filename-only">
             <input id="fileNameInput" type="text" autocomplete="off" />
-            <button id="suggestNameBtn" class="mini-button" disabled>OCR 추천</button>
           </div>
-          <button id="nameSuggestion" class="suggestion-chip hidden" type="button"></button>
         </div>
 
         <div class="two-fields">
           <label class="field-group">
             <span>저장 형식</span>
             <select id="exportFormat">
-              <option value="searchable-pdf">검색 가능한 PDF</option>
-              <option value="pdf">일반 PDF</option>
+              <option value="searchable-pdf" disabled>검색 가능한 PDF · OCR 필요</option>
+              <option value="pdf" selected>일반 PDF</option>
               <option value="jpg">JPG 이미지</option>
               <option value="png">PNG 이미지</option>
             </select>
@@ -164,16 +167,15 @@
 
     <section id="settingsTab" class="tab-panel">
       <section class="settings-list soft-card">
-        <div class="settings-row">
-          <div><strong>보안 · 오프라인 준비</strong><span id="offlinePrepDetail">OCR·PDF 엔진을 로컬 캐시에 준비하고 무결성 지문을 잠급니다. 문서 보정은 내장 호환 엔진으로도 동작합니다.</span></div>
-          <div class="settings-actions">
-            <span id="offlinePrepBadge" class="value-pill">준비 전</span>
-            <button id="offlinePrepBtn" class="mini-button">준비</button>
-          </div>
-        </div>
-        <div class="settings-row">
-          <div><strong>보안 모드</strong><span id="securityDetail">외부 스크립트를 HTML에서 직접 실행하지 않고, 최초 지문과 일치하는 앱 캐시 사본에서 실행합니다.</span></div>
-          <span id="securityBadge" class="value-pill secure-pill">강화</span>
+        <div class="settings-row offline-prep-row">
+          <button id="offlinePrepBtn" class="offline-prep-control" type="button">
+            <span class="offline-prep-copy">
+              <strong>보안 · 오프라인 준비</strong>
+              <small id="offlinePrepDetail">필요한 엔진을 검증해 앱 전용 캐시에 준비합니다.</small>
+              <small class="security-inline"><b id="securityBadge" class="security-inline-badge">보안 강화</b><span id="securityDetail">엔진 파일은 고정 버전 + SHA-256 지문 잠금으로 사용합니다.</span></small>
+            </span>
+            <span id="offlinePrepBadge" class="offline-prep-state">준비 전 · 준비하기</span>
+          </button>
         </div>
         <div class="settings-row">
           <div><strong>화면 모드</strong><span>라이트·다크·시스템 설정을 선택할 수 있습니다.</span></div>
@@ -204,7 +206,7 @@
     <div class="sheet-panel crop-panel">
       <div class="sheet-handle"></div>
       <div class="sheet-heading"><div><h3>문서 영역 조정</h3><p>네 모서리를 문서 끝에 맞춘 뒤 적용하세요.</p></div><button class="round-button" data-close-crop>×</button></div>
-      <div class="crop-stage"><canvas id="cropCanvas"></canvas></div>
+      <div class="crop-stage"><canvas id="cropCanvas"></canvas><canvas id="cropMagnifier" class="crop-magnifier hidden" width="116" height="116" aria-hidden="true"></canvas></div>
       <div class="sheet-actions"><button id="resetCropBtn" class="secondary-button">자동 다시 찾기</button><button id="applyCropBtn" class="primary-button">보정 적용</button></div>
     </div>
   </section>
@@ -243,11 +245,11 @@
     <div class="sheet-backdrop" data-close-about></div>
     <div class="sheet-panel tall-sheet">
       <div class="sheet-handle"></div>
-      <div class="sheet-heading"><div><h3>ScanBox 1.1.2</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
+      <div class="sheet-heading"><div><h3>ScanBox 1.1.3</h3><p>가볍게 알아두면 좋은 사용법입니다.</p></div><button class="round-button" data-close-about>×</button></div>
       <div class="about-copy">
         <h4>1. 촬영</h4><p>자동 보정이 켜져 있으면 문서 테두리를 찾아 원근을 보정합니다. 결과가 마음에 들지 않으면 각 페이지의 ‘영역 조정’에서 네 모서리를 직접 옮길 수 있습니다.</p>
         <h4>2. 정리</h4><p>카드의 ≡ 손잡이를 누른 채 위아래로 움직이면 페이지 순서를 바꿀 수 있습니다. PDF도 편집기로 불러오면 같은 방식으로 정리할 수 있습니다.</p>
-        <h4>3. 검색 PDF</h4><p>OCR 단어의 좌표를 PDF의 실제 스캔 위치에 맞춰 투명하게 배치하므로 검색·복사 시 위치가 기존 버전보다 더 자연스럽습니다.</p>
+        <h4>3. OCR · 검색 PDF</h4><p>OCR은 기본 OFF이며 마지막 선택을 기억합니다. OCR을 켜면 텍스트 확인과 검색 가능한 PDF를 사용할 수 있습니다.</p>
         <h4>4. 저장</h4><p>파일을 만든 뒤 ‘공유 / 파일에 저장’을 누르면 iOS 공유 시트를 통해 iCloud Drive, 나의 iPhone, AirDrop, 메일 등으로 보낼 수 있습니다.</p>
         <h4>5. 보안</h4><p>문서 데이터는 ScanBox 서버로 전송하지 않습니다. OCR·PDF 엔진은 버전을 고정하고 최초 SHA-256 지문을 잠근 뒤 앱 전용 캐시에서 실행합니다. 문서 보정은 OpenCV 가속이 실패해도 내장 호환 엔진으로 계속 사용할 수 있습니다.</p>
       </div>

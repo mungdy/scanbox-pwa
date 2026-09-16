@@ -1,23 +1,33 @@
 # ScanBox Change Log
 
-## v1.1.2 — 2026-09-16
+## v1.1.3 — 2026-09-16
 
-### iPhone 문서 보정 호환성
-- OpenCV 5.x의 Promise/thenable 초기화를 Safari에서도 안전하게 대기하도록 수정
-- OpenCV 가속 실패 시 자동으로 내장 JavaScript 문서 감지·원근 보정으로 전환
-- 수동 4점 영역 조정은 OpenCV 상태와 무관하게 항상 사용 가능
-- 문서/흑백 필터도 OpenCV 실패 시 JS 경로를 즉시 사용해 불필요한 대기를 줄임
+### Document detection / perspective correction
+- 첫 스캔에서 OpenCV 초기화를 실제로 기다리도록 비동기 대기 누락 수정
+- 검출 해상도 1,600 px로 상향
+- 다중 Canny + adaptive/Otsu threshold + contour 후보 점수화 적용
+- contour 검출이 불충분할 때 HoughLinesP 기반 4변 fallback 추가
+- 검출 후 각 변의 연속 gradient를 다시 탐색하는 edge refinement 추가
+- 자동 검출 결과에 최소 inset을 적용해 얇은 배경 테두리 유입 감소
+- OpenCV warp의 `BORDER_REPLICATE` 제거, 흰색 constant border 사용
+- JS perspective fallback mesh 세분화
+- 수동 4점 드래그 터치 범위 확대 및 확대경 추가
 
-### UI / UX
-- 설정에 시스템 / 라이트 / 다크 화면 모드 추가
-- 다크 테마 전용 색상, 카드, 시트, 입력 UI 최적화
-- 보안 · 오프라인 준비 상태에 `준비 전 / 완료 ✓ / 확인 필요` 배지 추가
-- 필수 준비 성공 후 버튼을 `다시 확인`으로 변경하고 성공 상태를 기기에 저장
+### OCR
+- OCR 기본값 OFF
+- 마지막 ON/OFF 선택을 `localStorage`에 저장
+- OCR OFF에서는 OCR 확인/검색 PDF 선택 비활성화
+- OCR 전용 렌더 해상도 상향
+- 저장 이미지와 OCR 전처리 이미지를 완전히 분리
+- OCR 입력에 grayscale + percentile contrast normalization 적용
+- Tesseract PSM 3 기본, 낮은 신뢰도에서 PSM 6 재시도 후 더 나은 결과 선택
+- OCR 기반 파일명 자동 추천 기능 삭제
 
-### 준비 로직 안정화
-- OpenCV를 필수 엔진이 아닌 선택적 가속 엔진으로 분리
-- OCR/PDF 필수 엔진 준비를 항목별로 계속 진행하여 하나의 실패가 나머지 준비를 중단하지 않도록 변경
-- OpenCV 실패 시에도 내장 보정 엔진 사용을 명확히 표시
+### UI / Security
+- 다크 모드에서 ON 토글 색상이 사라지는 CSS specificity 문제 수정
+- 보안 · 오프라인 준비의 상태/동작을 하나의 컨트롤로 통합
+- 외부 통신 허용 범위는 기존과 동일하게 고정 버전 엔진 다운로드용 jsDelivr만 허용
+- 문서 이미지/OCR 결과/PDF의 외부 업로드 경로는 추가하지 않음
 
 ## v1.1.1 — 2026-09-16
 

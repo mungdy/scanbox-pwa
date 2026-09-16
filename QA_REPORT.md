@@ -1,75 +1,65 @@
-# ScanBox PWA v1.1.2 QA Report
+# ScanBox PWA v1.1.3 QA Report
 
 검토일: 2026-09-16 KST
 
-## 이번 수정의 핵심 검증
+## 이번 버전에서 확인한 수정
 
-- OpenCV 5.x 초기화가 `Promise` 객체인지 여부만 보지 않고 `then` 가능 객체(thenable)까지 기다리도록 수정했습니다.
-- OpenCV 가속 엔진이 실패해도 `detectDocumentCornersJs()`와 `warpDocumentJs()`가 자동으로 사용되는 것을 정적 검사했습니다.
-- 수동 4점 영역 조정에서 OpenCV 준비 여부 때문에 진입을 차단하던 조건을 제거했습니다.
-- 내장 자동 문서 감지 알고리즘을 400 × 300 합성 이미지의 기울어진 사각 문서로 계산 테스트했습니다. 예상 모서리 `(55,40) / (340,25) / (365,255) / (38,270)`에 대해 `(52,37) / (343,23) / (367,258) / (36,272)`를 검출했습니다.
-- 내장 원근 보정의 unit-square → quadrilateral projective mapping이 네 입력 모서리를 정확히 다시 매핑하는 수치 테스트를 통과했습니다.
+### 문서 검출 / 원근 보정
+- v1.1.2에서 `waitForCv()`를 호출만 하고 기다리지 않던 경로를 수정해, 자동 보정 시작 전에 최대 5.5초 동안 OpenCV 가속 초기화를 실제로 기다립니다.
+- OpenCV 검출기는 여러 Canny 조건, adaptive threshold, Otsu threshold의 contour 후보를 함께 평가합니다.
+- contour 후보가 충분하지 않을 때 `HoughLinesP` 기반 4변 fallback을 시도하도록 추가했습니다.
+- 검출 후 네 변 주변의 평균 gradient가 강한 위치를 다시 찾는 edge refinement를 추가했습니다.
+- 자동 검출 결과에는 아주 작은 inset을 적용해 원근 보정 시 문서 밖 배경이 얇게 끼는 현상을 줄이도록 했습니다.
+- OpenCV `warpPerspective()`의 border를 `BORDER_REPLICATE`에서 흰색 `BORDER_CONSTANT`로 변경했습니다.
+- 내장 JS perspective fallback mesh를 기존보다 촘촘하게 변경했습니다.
+- 수동 네 모서리 조정의 터치 허용 범위를 넓히고 드래그 확대경을 추가했습니다.
 
-## UI / 상태 검증
+### OCR
+- OCR 기본값이 OFF인지 코드와 HTML 초기 상태를 확인했습니다.
+- 마지막 OCR ON/OFF 상태를 `localStorage`에 저장하고 다음 실행에서 읽는 로직을 확인했습니다.
+- OCR OFF에서는 `OCR 확인` 버튼 및 `검색 가능한 PDF` 옵션이 비활성화됩니다.
+- OCR용 렌더 해상도를 높이고 저장용 이미지와 별도 canvas에서 grayscale + percentile contrast normalization을 수행하도록 분리했습니다.
+- Tesseract 기본 PSM 3을 적용하고, 텍스트/신뢰도 점수가 낮을 때 PSM 6으로 한 번 더 인식해 점수가 더 높은 결과를 선택하도록 했습니다.
+- OCR 기반 파일명 자동 추천 관련 DOM 및 JavaScript 경로가 제거된 것을 확인했습니다.
 
-- 설정에 `시스템 / 라이트 / 다크` 화면 모드가 연결되어 있습니다.
-- 화면 모드는 `localStorage`에 저장되며 초기 렌더 전에 `theme-init.js`가 적용합니다.
-- 다크 모드용 배경, 카드, 입력, 시트, 진행창, 배지 색상 정의를 확인했습니다.
-- `보안 · 오프라인 준비` 상태는 `준비 전 / 준비 중 / 완료 ✓ / 확인 필요`로 구분됩니다.
-- 성공 상태는 앱 버전별 키로 저장되어 재실행 후에도 `완료 ✓`를 표시합니다.
-- OpenCV 가속만 실패하고 OCR/PDF 필수 항목이 성공한 경우에는 전체 준비를 실패로 처리하지 않고 내장 문서 보정 엔진 사용을 안내합니다.
+### UI
+- 다크 모드에서 일반 `.toggle-line i` 규칙이 checked 배경색을 덮던 CSS 우선순위 문제를 별도 checked 규칙으로 수정했습니다.
+- `보안 · 오프라인 준비`를 상태 배지와 별도 버튼 두 요소가 아니라 하나의 클릭 가능한 컨트롤 안에서 상태와 동작을 표시하도록 변경했습니다.
 
 ## 자동 정적 검사
 
-다음 21개 항목을 자동 검사했고 모두 통과했습니다.
+다음 검사를 실행했습니다.
 
+- `app.js`, `sw.js`, `secure-runtime.js`, `pdf-engine.js` Node.js 문법 검사 통과
 - HTML 중복 ID 없음
-- JavaScript DOM 참조 누락 없음
-- 원격 `<script src>` 없음
-- 화면 모드 selector 존재
-- 다크 테마 CSS 존재
-- 오프라인 준비 완료 배지/설명 존재
-- 오프라인 준비 상태 영속화 로직 존재
-- OpenCV thenable 처리 존재
-- 내장 JS 문서 모서리 검출 존재
-- 내장 JS 원근 보정 존재
-- 수동 영역 조정 OpenCV 차단 문구 제거
-- OpenCV가 필수 오프라인 준비 항목에서 분리됨
-- Service Worker 버전 1.1.2
-- 보안 런타임 버전 1.1.2
-- `theme-init.js` Service Worker app shell 포함
-- CSP 존재
-- PDF.js eval 비활성화
-- SVG 입력 차단
-- 앱 자체 코드에 XHR / WebSocket / sendBeacon 직접 전송 경로 없음
-- manifest 버전명 1.1.2
-- Service Worker app shell 파일 누락 없음
+- `app.js`에서 참조하는 `#id`가 모두 `index.html`에 존재
+- 파일명 자동 추천 관련 `suggestNameBtn`, `nameSuggestion`, `suggestFileName` 참조 없음
+- `app.js`, Service Worker, 보안 런타임, manifest, 화면 표시 버전이 모두 1.1.3으로 일치
+- 외부 실행 자산 URL은 jsDelivr 고정 버전 경로로 제한
+- 앱 자체 전송 API 검색 결과: 외부 `fetch()`는 `secure-runtime.js`의 검증된 엔진 다운로드 경로에만 존재하며, Service Worker의 `fetch()`는 same-origin 앱 파일 처리에 사용됨
+- XHR / WebSocket / `sendBeacon` 문서 전송 경로 없음
 
-`app.js`, `secure-runtime.js`, `pdf-engine.js`, `sw.js`, `theme-init.js`, 로컬 JSZip은 모두 JavaScript 문법 검사를 통과했습니다.
+## PDF 엔진 재검증
 
-## 검색 가능한 PDF 엔진 재검증
-
-`pdf-engine.js`로 JPEG 1페이지와 한국어/영문 OCR 단어 좌표를 넣은 테스트 PDF를 다시 생성했습니다.
+`pdf-engine.js`에 120 × 160 JPEG 1페이지와 `한글테스트`, `ABC` OCR 단어 좌표를 넣어 테스트 PDF를 생성했습니다.
 
 - PDF 1.7
 - A4 1페이지
 - JavaScript 없음
 - 암호화 없음
-- 텍스트 추출: `한글테스트`, `ABC` 확인
+- `pdftotext`에서 `한글테스트`, `ABC` 추출 확인
 
 테스트용 PDF는 배포 ZIP에 포함하지 않습니다.
 
-## 실기 테스트 한계
+## 확인 한계
 
-현재 작업 환경에서는 실제 iPhone Safari/PWA의 카메라, WebKit WASM, 홈 화면 PWA, iOS 공유 시트를 직접 조작할 수 없습니다. 따라서 아래 항목은 사용자 기기에서 최종 확인이 필요합니다.
+현재 작업 환경에서는 실제 iPhone Safari/PWA의 카메라와 WebKit에서 촬영 문서를 직접 조작할 수 없습니다. 따라서 아래는 사용자 기기에서 실기 확인이 필요합니다.
 
-- 카메라 촬영 후 자동 문서 감지
-- 실제 사진에서 내장 fallback 감지 품질
-- 수동 네 모서리 드래그 후 원근 보정
-- OpenCV 가속 엔진 초기화 여부
-- 보안 · 오프라인 준비 완료 상태
-- 다크/라이트 전환 후 PWA 재실행 상태 유지
-- 한국어 + 영어 OCR
-- iOS 공유 / 파일에 저장
+- 실제 촬영 문서에서 4개 모서리 자동 검출률
+- 흰 종이/유색 배경, 그림자, 원근이 큰 촬영에서 배경 유입 정도
+- 평행사변형 형태의 반복 흔적이 실제 iPhone 결과에서 사라졌는지
+- 확대경을 이용한 수동 4점 드래그 감각
+- 한국어/영어 혼합 문서의 OCR 정확도 개선 폭
+- 홈 화면 PWA 업데이트 및 Service Worker 캐시 교체
 
-v1.1.2에서는 OpenCV가 실패해도 수동 영역 조정과 문서 보정 기능 자체가 차단되지 않도록 장애 격리를 적용했습니다.
+이번 수정은 위 현상들의 코드상 원인을 직접 수정했지만, 실제 카메라 조건별 검출 정확도를 100% 보장하는 검증은 아닙니다.
