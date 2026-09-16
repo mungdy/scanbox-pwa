@@ -376,3 +376,132 @@ html.is-page-dragging,html.is-page-dragging body{
   .drop-indicator{margin-left:5px;margin-right:5px}
   .drop-indicator span{right:12px}
 }
+
+
+/* v1.1.10 · unified compact page cards + quiet drag feedback */
+/* Drag keeps the floating motion, but removes the bright insertion line. */
+.page-card.dragging,.pdf-page-card.dragging{
+  opacity:.86;
+  box-shadow:0 22px 54px rgba(0,0,0,.20),0 0 0 2px #111!important;
+}
+.page-card.dragging .drag-handle,.pdf-page-card.dragging .pdf-drag-handle{
+  background:#e7e9ec!important;
+  color:#181b20!important;
+}
+.drop-indicator{
+  height:14px;
+  margin:1px 7px;
+  background:transparent!important;
+  box-shadow:none!important;
+  border:0!important;
+  animation:none!important;
+  opacity:0!important;
+  pointer-events:none;
+}
+.drop-indicator::before,.drop-indicator::after,.drop-indicator span{display:none!important}
+:root[data-theme="dark"] .page-card.dragging,:root[data-theme="dark"] .pdf-page-card.dragging{
+  box-shadow:0 22px 54px rgba(0,0,0,.58),0 0 0 2px #000!important;
+}
+:root[data-theme="dark"] .page-card.dragging .drag-handle,
+:root[data-theme="dark"] .pdf-page-card.dragging .pdf-drag-handle{
+  background:#2a2f36!important;
+  color:#f1f3f5!important;
+}
+
+/* Scanner and PDF editor share the same card rhythm. */
+.unified-page-card{border-radius:16px}
+.unified-card-head{display:flex;align-items:center;gap:7px;min-width:0;position:relative}
+.vertical-sort-handle{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1}
+.page-fraction{display:flex;align-items:center;gap:1px;white-space:nowrap;font-weight:850;color:var(--text)}
+.page-fraction input{
+  width:30px;height:30px;border:0;border-bottom:1.5px solid #cfd5dc;background:transparent;
+  color:var(--text);text-align:center;font-weight:900;outline:none;border-radius:0;padding:0 1px;-moz-appearance:textfield
+}
+.page-fraction input::-webkit-outer-spin-button,.page-fraction input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.page-fraction input:focus{border-bottom-color:#1f2329;box-shadow:0 2px 0 rgba(17,24,39,.08)}
+.page-fraction span{font-size:12px;font-weight:800;color:var(--text)}
+.top-delete-button{
+  margin-left:auto!important;flex:0 0 auto;min-height:30px!important;padding:5px 9px!important;
+  border-radius:9px!important;background:#fff0f1!important;color:#dc3545!important;border:1px solid #ffd4d8!important;
+  font-size:10px!important;font-weight:850!important
+}
+.top-delete-button:hover{background:#ffe5e8!important}
+:root[data-theme="dark"] .page-fraction input{border-bottom-color:#4a535f}
+:root[data-theme="dark"] .top-delete-button{background:#3a1f24!important;color:#ff7b86!important;border-color:#5d2b32!important}
+
+/* Scanner: all edit controls live on one compact row. */
+.compact-scan-card{grid-template-columns:72px minmax(0,1fr);gap:10px;padding:9px;min-height:104px}
+.compact-page-thumb{width:72px;height:96px;min-height:96px;border-radius:11px}
+.compact-page-controls{min-height:96px;gap:8px;justify-content:center}
+.compact-page-controls .page-head{gap:6px}
+.compact-page-controls .page-source{flex:1 1 auto;max-width:none;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--sub)}
+.compact-page-controls .drag-handle{width:34px;height:34px;flex-basis:34px;border-radius:10px;font-size:18px}
+.scan-control-row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;min-width:0}
+.scan-control-row .filter-btn,.scan-control-row .scan-tool-btn{
+  min-width:0;min-height:32px;height:32px;border:0;border-radius:9px;padding:0 4px;
+  background:#f2f4f6;color:#4e5968;font-size:9.5px;font-weight:800;white-space:nowrap
+}
+.scan-control-row .filter-btn.active{background:#e8f2ff;color:#1769d2;box-shadow:inset 0 0 0 1px rgba(49,130,246,.13)}
+.scan-control-row .scan-tool-btn:active,.scan-control-row .filter-btn:active{transform:scale(.98)}
+:root[data-theme="dark"] .scan-control-row .filter-btn,:root[data-theme="dark"] .scan-control-row .scan-tool-btn{background:#232831;color:#aeb7c2}
+:root[data-theme="dark"] .scan-control-row .filter-btn.active{background:#173352;color:#8fc2ff}
+
+/* PDF editor cards mirror the scanner card composition. */
+.pdf-editor-pages{gap:8px}
+.pdf-page-card{
+  display:grid!important;grid-template-columns:72px minmax(0,1fr)!important;align-items:stretch;gap:10px;
+  min-height:104px;padding:9px;border-radius:16px
+}
+.pdf-thumb{grid-column:1!important;grid-row:1!important;width:72px;height:96px!important;min-height:96px;border-radius:11px;align-self:center}
+.pdf-card-content{grid-column:2;grid-row:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:9px}
+.pdf-card-head{min-width:0}
+.pdf-drag-handle{width:34px;height:34px;border-radius:10px;font-size:18px;flex:0 0 34px}
+.pdf-order-inline{display:flex;align-items:center;gap:1px;white-space:nowrap}
+.pdf-order-inline input{width:30px;height:30px;border:0;border-bottom:1.5px solid #cfd5dc;background:transparent;color:var(--text);text-align:center;font-weight:900;outline:none;padding:0 1px;-moz-appearance:textfield}
+.pdf-order-inline input::-webkit-outer-spin-button,.pdf-order-inline input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.pdf-order-inline span{font-size:12px;font-weight:800;color:var(--text)}
+.pdf-select-inline{display:flex;align-items:center;gap:4px;margin-left:2px;color:var(--sub);font-size:10px;font-weight:800;white-space:nowrap}
+.pdf-select-inline input{width:16px;height:16px;accent-color:var(--blue)}
+.pdf-card-meta-line{display:flex;align-items:center;gap:7px;min-width:0;padding-left:41px}
+.pdf-card-meta-line>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sub);font-size:9.5px}
+.pdf-card-meta-line>b{flex:0 0 auto;padding:4px 6px;border-radius:7px;background:#f2f4f6;color:#6b7684;font-size:8.5px}
+.pdf-page-card.selected{border-color:#c8d4e2;background:#fafcff}
+:root[data-theme="dark"] .pdf-order-inline input{border-bottom-color:#4a535f}
+:root[data-theme="dark"] .pdf-card-meta-line>b{background:#232831;color:#aeb7c2}
+:root[data-theme="dark"] .pdf-page-card.selected{background:#171c23;border-color:#3a434f}
+
+/* Keep PDF bulk actions on one calm, compact line. */
+.editor-toolbar{
+  display:flex;flex-wrap:nowrap;align-items:center;gap:6px;margin:11px 0 12px;
+  overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;padding:1px 0 4px
+}
+.editor-toolbar::-webkit-scrollbar{display:none}
+.editor-toolbar .secondary-mini{flex:1 0 auto;min-width:max-content;min-height:32px;height:32px;border-radius:9px;padding:0 10px;font-size:10px;background:#f2f4f6;color:#5c6673}
+.editor-toolbar .secondary-mini.danger-text{background:#fff3f3;color:#d14343}
+:root[data-theme="dark"] .editor-toolbar .secondary-mini{background:#232831;color:#aeb7c2}
+:root[data-theme="dark"] .editor-toolbar .secondary-mini.danger-text{background:#321e21;color:#ff8089}
+
+@media(max-width:680px){
+  .compact-scan-card,.pdf-page-card{grid-template-columns:66px minmax(0,1fr)!important;gap:8px;min-height:96px}
+  .compact-page-thumb,.pdf-thumb{width:66px;height:88px!important;min-height:88px}
+  .compact-page-controls{min-height:88px;gap:7px}
+  .page-fraction span,.pdf-order-inline span{font-size:11px}
+  .scan-control-row{gap:4px}
+  .scan-control-row .filter-btn,.scan-control-row .scan-tool-btn{font-size:9px;padding:0 2px}
+}
+@media(max-width:430px){
+  .page-card.compact-scan-card,.pdf-page-card{grid-template-columns:60px minmax(0,1fr)!important;gap:8px;padding:8px;min-height:88px}
+  .compact-page-thumb,.pdf-thumb{width:60px;height:80px!important;min-height:80px}
+  .compact-page-controls{min-height:80px;gap:6px}
+  .compact-page-controls .drag-handle,.pdf-drag-handle{width:31px;height:31px;flex-basis:31px;font-size:17px}
+  .page-fraction input,.pdf-order-inline input{width:25px;height:27px;font-size:12px}
+  .page-fraction span,.pdf-order-inline span{font-size:10.5px}
+  .compact-page-controls .page-source{display:none}
+  .top-delete-button{min-height:28px!important;padding:4px 7px!important;font-size:9.5px!important}
+  .scan-control-row .filter-btn,.scan-control-row .scan-tool-btn{height:30px;min-height:30px;font-size:8.7px;border-radius:8px}
+  .pdf-select-inline span{display:none}
+  .pdf-card-meta-line{padding-left:37px}
+  .editor-toolbar .secondary-mini{padding:0 9px;font-size:9.5px}
+}
+.pdf-card-content .pdf-page-delete.top-delete-button{width:auto!important;height:30px!important;grid-column:auto!important;grid-row:auto!important;justify-self:auto!important}
+@media(max-width:430px){.pdf-card-content .pdf-page-delete.top-delete-button{width:auto!important;height:28px!important}}

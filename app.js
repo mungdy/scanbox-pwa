@@ -1,4 +1,4 @@
-/* ScanBox PWA v1.1.9 - Robust Edge-Band Detection + Seamless Perspective
+/* ScanBox PWA v1.1.10 - Robust Edge-Band Detection + Seamless Perspective
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.9';
+  const APP_VERSION = '1.1.10';
   const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
   const THEME_KEY = 'scanbox.theme';
   const OCR_ENABLED_KEY = 'scanbox.ocr.enabled';
@@ -605,13 +605,22 @@
     [els.pdfExtractBtn, els.pdfOcrTextBtn, els.pdfDeleteBtn].forEach(b => { if (b) b.disabled = selected === 0; });
     if (els.pdfSelectAllBtn) els.pdfSelectAllBtn.textContent = hasPages && selected === pages.length ? '선택 해제' : '전체 선택';
     els.pdfEditorPages.innerHTML = pages.map((page, idx) => `
-      <article class="pdf-page-card ${page.selected ? 'selected' : ''}" data-editor-page-id="${escapeHtml(page.id)}">
-        <button class="pdf-drag-handle" data-editor-sort-handle aria-label="${idx + 1}페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동">≡</button>
-        <label class="pdf-page-check"><input type="checkbox" data-editor-select ${page.selected ? 'checked' : ''} /><span>${idx + 1}</span></label>
+      <article class="pdf-page-card unified-page-card ${page.selected ? 'selected' : ''}" data-editor-page-id="${escapeHtml(page.id)}">
         <div class="pdf-thumb"><img src="${escapeHtml(page.previewUrl)}" alt="${idx + 1}페이지" /></div>
-        <div class="pdf-page-meta"><strong>${idx + 1}페이지${page.ocrTextOverride != null ? ' · OCR 수정됨' : ''}</strong><span>${escapeHtml(page.sourceName)} · 원본 ${page.originalPage}p</span></div>
-        <label class="pdf-order-field"><span>순서</span><input type="number" data-editor-order min="1" max="${pages.length}" value="${idx + 1}" inputmode="numeric" /></label>
-        <button class="pdf-page-delete" data-editor-action="delete">삭제</button>
+        <div class="pdf-card-content">
+          <div class="pdf-card-head unified-card-head">
+            <button class="pdf-drag-handle vertical-sort-handle" data-editor-sort-handle aria-label="${idx + 1}페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동">↕</button>
+            <label class="pdf-order-inline page-fraction" aria-label="PDF 페이지 순서">
+              <input type="number" data-editor-order min="1" max="${pages.length}" value="${idx + 1}" inputmode="numeric" /><span>/${pages.length} 페이지</span>
+            </label>
+            <label class="pdf-select-inline"><input type="checkbox" data-editor-select ${page.selected ? 'checked' : ''} /><span>선택</span></label>
+            <button class="pdf-page-delete top-delete-button" data-editor-action="delete">삭제</button>
+          </div>
+          <div class="pdf-card-meta-line">
+            <span>${escapeHtml(page.sourceName)} · 원본 ${page.originalPage}p</span>
+            ${page.ocrTextOverride != null ? '<b>OCR 수정됨</b>' : ''}
+          </div>
+        </div>
       </article>`).join('');
   }
 
@@ -1212,26 +1221,24 @@
     els.createOutputBtn.disabled = count === 0;
 
     els.pageList.innerHTML = state.pages.map((page, idx) => `
-      <article class="page-card compact-scan-card" data-page-id="${escapeHtml(page.id)}">
+      <article class="page-card compact-scan-card unified-page-card" data-page-id="${escapeHtml(page.id)}">
         <button class="page-preview-wrap page-preview-button compact-page-thumb" data-action="preview" aria-label="${idx + 1}페이지 크게 미리보기">
           <img class="page-preview" src="${escapeHtml(page.previewUrl || '')}" alt="${idx + 1}페이지" />
           <span class="preview-hint">보기</span>
         </button>
         <div class="page-content compact-page-controls">
-          <div class="page-head">
-            <button class="drag-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동">≡</button>
-            <label class="page-number-inline" aria-label="페이지 순서 번호">
-              <span>[</span><input data-page-order-inline type="number" min="1" max="${count}" value="${idx + 1}" inputmode="numeric" aria-label="${idx + 1}페이지 순서" /><span>] 페이지</span>
+          <div class="page-head unified-card-head">
+            <button class="drag-handle vertical-sort-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동">↕</button>
+            <label class="page-number-inline page-fraction" aria-label="페이지 순서 번호">
+              <input data-page-order-inline type="number" min="1" max="${count}" value="${idx + 1}" inputmode="numeric" aria-label="${idx + 1}페이지 순서" /><span>/${count} 페이지</span>
             </label>
-            <span class="page-source">${escapeHtml(page.sourceName || '')}</span>
+            <span class="page-source">${escapeHtml(page.sourceName || '')}${page.ocr ? ` · OCR${page.ocr.editedText != null ? ' 수정됨' : ''}` : ''}</span>
+            <button data-action="delete" class="page-delete-button top-delete-button">삭제</button>
           </div>
-          <div class="page-midline">
-            <div class="filter-tabs">${filterButton(page, 'color', '컬러')}${filterButton(page, 'bw', '흑백')}${filterButton(page, 'document', '문서')}</div>
-            ${page.ocr ? `<span class="ocr-chip">OCR${page.ocr.editedText != null ? ' · 수정됨' : ''}</span>` : ''}
-          </div>
-          <div class="page-actions">
-            <div class="page-action-main"><button data-action="crop">영역 조정</button><button data-action="rotate">↻ 회전</button></div>
-            <button data-action="delete" class="page-delete-button">삭제</button>
+          <div class="scan-control-row" aria-label="페이지 편집 도구">
+            ${filterButton(page, 'color', '컬러')}${filterButton(page, 'bw', '흑백')}${filterButton(page, 'document', '문서')}
+            <button data-action="crop" class="scan-tool-btn">영역 조정</button>
+            <button data-action="rotate" class="scan-tool-btn">↻ 회전</button>
           </div>
         </div>
       </article>`).join('');
