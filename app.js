@@ -1,4 +1,4 @@
-/* ScanBox PWA v1.1.10 - Robust Edge-Band Detection + Seamless Perspective
+/* ScanBox PWA v1.1.11 - Robust Edge-Band Detection + Seamless Perspective
  * - v1.1 기능 유지 + 공급망/파일 입력/PDF 처리 보안 강화
  * - 외부 엔진은 버전 고정 URL에서 받아 SHA-256 TOFU 잠금 후 같은 출처 가상 캐시에 저장
  * - CSP, PDF.js eval 비활성화, 파일/페이지/캔버스 상한, 같은 출처 Service Worker 캐시
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.10';
+  const APP_VERSION = '1.1.11';
   const OFFLINE_READY_KEY = `scanbox.offline-ready.v${APP_VERSION}`;
   const THEME_KEY = 'scanbox.theme';
   const OCR_ENABLED_KEY = 'scanbox.ocr.enabled';
@@ -103,7 +103,7 @@
       cameraInput: $('#cameraInput'), galleryInput: $('#galleryInput'),
       autoCorrectToggle: $('#autoCorrectToggle'), ocrToggle: $('#ocrToggle'), opencvState: $('#opencvState'),
       ocrLangRow: $('#ocrLangRow'), ocrLangKor: $('#ocrLangKor'), ocrLangEng: $('#ocrLangEng'), ocrLangChi: $('#ocrLangChi'),
-      scannerPagesSection: $('#scannerPagesSection'), pageCount: $('#pageCount'), clearPagesBtn: $('#clearPagesBtn'), pageList: $('#pageList'),
+      scannerPagesSection: $('#scannerPagesSection'), pageCount: $('#pageCount'), rotateAllPagesBtn: $('#rotateAllPagesBtn'), clearPagesBtn: $('#clearPagesBtn'), pageList: $('#pageList'),
       fileNameInput: $('#fileNameInput'),
       exportFormat: $('#exportFormat'), qualityPreset: $('#qualityPreset'), pdfPageSize: $('#pdfPageSize'), estimatedSize: $('#estimatedSize'),
       ocrPreviewBtn: $('#ocrPreviewBtn'), createOutputBtn: $('#createOutputBtn'),
@@ -113,7 +113,7 @@
       pdfImageSheet: $('#pdfImageSheet'), pdfImageCounter: $('#pdfImageCounter'), pdfImagePreviewStage: $('#pdfImagePreviewStage'), pdfImagePreview: $('#pdfImagePreview'), pdfImagePrev: $('#pdfImagePrev'), pdfImageNext: $('#pdfImageNext'), pdfImageRotateLeft: $('#pdfImageRotateLeft'), pdfImageRotateRight: $('#pdfImageRotateRight'), pdfImageThumbs: $('#pdfImageThumbs'), pdfImageSheetFormat: $('#pdfImageSheetFormat'), pdfImageExportBtn: $('#pdfImageExportBtn'),
       offlinePrepBtn: $('#offlinePrepBtn'), offlinePrepBadge: $('#offlinePrepBadge'), offlinePrepDetail: $('#offlinePrepDetail'), securityBadge: $('#securityBadge'), securityDetail: $('#securityDetail'), themeMode: $('#themeMode'),
       cropSheet: $('#cropSheet'), cropCanvas: $('#cropCanvas'), cropMagnifier: $('#cropMagnifier'), resetCropBtn: $('#resetCropBtn'), applyCropBtn: $('#applyCropBtn'),
-      scanPreviewSheet: $('#scanPreviewSheet'), scanPreviewStage: $('#scanPreviewStage'), scanPreviewImage: $('#scanPreviewImage'), scanPreviewCounter: $('#scanPreviewCounter'), scanPreviewPrev: $('#scanPreviewPrev'), scanPreviewNext: $('#scanPreviewNext'),
+      scanPreviewSheet: $('#scanPreviewSheet'), scanPreviewStage: $('#scanPreviewStage'), scanPreviewImage: $('#scanPreviewImage'), scanPreviewCounter: $('#scanPreviewCounter'), scanPreviewPrev: $('#scanPreviewPrev'), scanPreviewRotate: $('#scanPreviewRotate'), scanPreviewNext: $('#scanPreviewNext'),
       progressOverlay: $('#progressOverlay'), progressTitle: $('#progressTitle'), progressText: $('#progressText'), progressBar: $('#progressBar'), progressPercent: $('#progressPercent'),
       outputSheet: $('#outputSheet'), outputInfo: $('#outputInfo'), saveOutputBtn: $('#saveOutputBtn'), shareOutputBtn: $('#shareOutputBtn'),
       ocrSheet: $('#ocrSheet'), ocrTextArea: $('#ocrTextArea'), applyOcrTextBtn: $('#applyOcrTextBtn'), copyOcrBtn: $('#copyOcrBtn'), pdfOcrSheet: $('#pdfOcrSheet'), pdfOcrTextArea: $('#pdfOcrTextArea'), applyPdfOcrTextBtn: $('#applyPdfOcrTextBtn'), aboutSheet: $('#aboutSheet'), toast: $('#toast'),
@@ -233,6 +233,23 @@
     els.clearPagesBtn.addEventListener('click', () => {
       cleanupPages(state.pages); state.pages = []; renderPages(); showToast('페이지를 모두 삭제했습니다.');
     });
+    els.rotateAllPagesBtn?.addEventListener('click', async () => {
+      if (!state.pages.length || state.busy) return;
+      state.busy = true;
+      try {
+        showProgress('전체 회전', '모든 스캔 페이지를 오른쪽으로 90° 회전하고 있습니다.', 0);
+        for (let i = 0; i < state.pages.length; i++) {
+          const page = state.pages[i];
+          page.rotation = (page.rotation + 90) % 360;
+          invalidateOcr(page);
+          await refreshPreview(page);
+          updateProgress(((i + 1) / state.pages.length) * 100, `${i + 1} / ${state.pages.length} 페이지 회전`);
+        }
+        renderPages();
+        showToast('모든 페이지를 90° 회전했습니다.');
+      } catch (err) { handleError(err, '전체 페이지를 회전하지 못했습니다.'); }
+      finally { state.busy = false; hideProgress(); }
+    });
 
     els.pageList.addEventListener('click', async e => {
       const btn = e.target.closest('button[data-action]');
@@ -246,8 +263,6 @@
           openScanPreview(idx); return;
         } else if (btn.dataset.action === 'delete') {
           revokePageUrls(page); state.pages.splice(idx, 1);
-        } else if (btn.dataset.action === 'rotate') {
-          page.rotation = (page.rotation + 90) % 360; invalidateOcr(page); await refreshPreview(page);
         } else if (btn.dataset.action === 'filter') {
           page.filter = btn.dataset.filter;
           if (page.filter === 'document' && !state.cvReady) prepareOpenCvForCorrection().catch(() => false);
@@ -609,7 +624,7 @@
         <div class="pdf-thumb"><img src="${escapeHtml(page.previewUrl)}" alt="${idx + 1}페이지" /></div>
         <div class="pdf-card-content">
           <div class="pdf-card-head unified-card-head">
-            <button class="pdf-drag-handle vertical-sort-handle" data-editor-sort-handle aria-label="${idx + 1}페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동">↕</button>
+            <button class="pdf-drag-handle vertical-sort-handle" data-editor-sort-handle aria-label="${idx + 1}페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동"><span class="sort-icon-stack" aria-hidden="true"><svg viewBox="0 0 28 40" focusable="false"><path d="M14 18V4M14 4L5 13M14 4l9 9M14 22v14M14 36l-9-9M14 36l9-9"/></svg></span></button>
             <label class="pdf-order-inline page-fraction" aria-label="PDF 페이지 순서">
               <input type="number" data-editor-order min="1" max="${pages.length}" value="${idx + 1}" inputmode="numeric" /><span>/${pages.length} 페이지</span>
             </label>
@@ -1217,6 +1232,7 @@
     if (els.pageCount) els.pageCount.textContent = `${count}장`;
     els.scannerPagesSection?.classList.toggle('hidden', count === 0);
     els.clearPagesBtn.disabled = count === 0;
+    if (els.rotateAllPagesBtn) els.rotateAllPagesBtn.disabled = count === 0;
     els.ocrPreviewBtn.disabled = count === 0 || !els.ocrToggle?.checked;
     els.createOutputBtn.disabled = count === 0;
 
@@ -1228,7 +1244,7 @@
         </button>
         <div class="page-content compact-page-controls">
           <div class="page-head unified-card-head">
-            <button class="drag-handle vertical-sort-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동">↕</button>
+            <button class="drag-handle vertical-sort-handle" data-sort-handle aria-label="페이지 순서 이동" title="누른 채 위아래로 끌어서 순서 이동"><span class="sort-icon-stack" aria-hidden="true"><svg viewBox="0 0 28 40" focusable="false"><path d="M14 18V4M14 4L5 13M14 4l9 9M14 22v14M14 36l-9-9M14 36l9-9"/></svg></span></button>
             <label class="page-number-inline page-fraction" aria-label="페이지 순서 번호">
               <input data-page-order-inline type="number" min="1" max="${count}" value="${idx + 1}" inputmode="numeric" aria-label="${idx + 1}페이지 순서" /><span>/${count} 페이지</span>
             </label>
@@ -1238,7 +1254,6 @@
           <div class="scan-control-row" aria-label="페이지 편집 도구">
             ${filterButton(page, 'color', '컬러')}${filterButton(page, 'bw', '흑백')}${filterButton(page, 'document', '문서')}
             <button data-action="crop" class="scan-tool-btn">영역 조정</button>
-            <button data-action="rotate" class="scan-tool-btn">↻ 회전</button>
           </div>
         </div>
       </article>`).join('');
@@ -1311,6 +1326,21 @@
     if (!els.scanPreviewSheet) return;
     $$('[data-close-scan-preview]').forEach(el => el.addEventListener('click', closeScanPreview));
     els.scanPreviewPrev?.addEventListener('click', () => stepScanPreview(-1));
+    els.scanPreviewRotate?.addEventListener('click', async () => {
+      if (!state.pages.length || state.scanPreviewIndex < 0 || state.busy) return;
+      const idx = state.scanPreviewIndex;
+      const page = state.pages[idx];
+      state.busy = true;
+      try {
+        page.rotation = (page.rotation + 90) % 360;
+        invalidateOcr(page);
+        await refreshPreview(page);
+        renderPages();
+        state.scanPreviewIndex = Math.min(idx, state.pages.length - 1);
+        updateScanPreview();
+      } catch (err) { handleError(err, '페이지를 회전하지 못했습니다.'); }
+      finally { state.busy = false; }
+    });
     els.scanPreviewNext?.addEventListener('click', () => stepScanPreview(1));
     let startX = null;
     els.scanPreviewStage?.addEventListener('pointerdown', e => { startX = e.clientX; });
